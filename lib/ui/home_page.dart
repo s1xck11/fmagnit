@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/waypoint.dart';
 import '../storage/waypoint_storage.dart';
+import 'mock_test_panel.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -75,17 +76,27 @@ class _HomePageState extends State<HomePage> {
                   separatorBuilder: (_, __) => const Divider(height: 1),
                   itemBuilder: (context, i) {
                     final w = _waypoints[i];
-                    return ListTile(
-                      title: Text(w.name),
-                      subtitle: Text(
-                        '${w.latitude.toStringAsFixed(6)}, '
-                        '${w.longitude.toStringAsFixed(6)}',
-                      ),
-                      onTap: () => _editWaypoint(w),
-                      trailing: IconButton(
-                        icon: const Icon(Icons.delete_outline),
-                        onPressed: () => _deleteWaypoint(w),
-                      ),
+                    return Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        ListTile(
+                          title: Text(w.name),
+                          subtitle: Text(
+                            '${w.latitude.toStringAsFixed(6)}, '
+                            '${w.longitude.toStringAsFixed(6)}',
+                          ),
+                          onTap: () => _editWaypoint(w),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.delete_outline),
+                            onPressed: () => _deleteWaypoint(w),
+                          ),
+                        ),
+                        MockTestPanel(
+                          label: w.name,
+                          latitude: w.latitude,
+                          longitude: w.longitude,
+                        ),
+                      ],
                     );
                   },
                 ),
