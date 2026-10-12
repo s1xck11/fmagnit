@@ -8,7 +8,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
-        android:label="fmagnit"
+        android:label="fmagnit "
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
 
