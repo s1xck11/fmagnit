@@ -7,6 +7,7 @@ import '../models/waypoint.dart';
 import '../services/mock_location_service.dart';
 import '../services/overlay_service.dart';
 import '../storage/waypoint_storage.dart';
+import 'address_search_dialog.dart';
 import 'import_export_dialogs.dart';
 import 'mock_test_panel.dart';
 
@@ -186,6 +187,21 @@ class _HomePageState extends State<HomePage> {
     await _load();
   }
 
+  /// Пункт 3: поиск адреса через Nominatim.
+  Future<void> _searchByAddress() async {
+    final result = await showAddressSearchDialog(context);
+    if (result == null) return;
+    // Открываем диалог редактирования, чтобы можно было переименовать
+    if (!mounted) return;
+    final edited = await showDialog<Waypoint>(
+      context: context,
+      builder: (_) => _WaypointDialog(initial: result),
+    );
+    if (edited == null) return;
+    await _storage.upsert(edited);
+    await _load();
+  }
+
   String _humanAge(Duration d) {
     if (d.inSeconds < 5) return 'только что';
     if (d.inSeconds < 60) return '${d.inSeconds} сек';
@@ -246,6 +262,11 @@ class _HomePageState extends State<HomePage> {
       appBar: AppBar(
         title: const Text('fmagnit'),
         actions: [
+          IconButton(
+            onPressed: _searchByAddress,
+            icon: const Icon(Icons.search),
+            tooltip: 'Поиск адреса',
+          ),
           IconButton(
             onPressed: _importPoints,
             icon: const Icon(Icons.file_download_outlined),
