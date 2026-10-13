@@ -18,7 +18,6 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import kotlin.math.cos
 import kotlin.math.sin
-import kotlin.math.sqrt
 import kotlin.random.Random
 
 class MainActivity : FlutterActivity() {
@@ -35,13 +34,13 @@ class MainActivity : FlutterActivity() {
     private var handler: Handler? = null
     private var pushRunnable: Runnable? = null
 
-    // Базовая точка (куда мы «телепортируемся»)
+    // Базовая точка (куда телепортируемся)
     private var baseLat: Double = 0.0
     private var baseLon: Double = 0.0
     private var baseAcc: Double = 3.0
     private var baseAlt: Double = 0.0
 
-    // Текущая отображаемая точка (с шумом)
+    // Отображаемая точка (с джиттером)
     private var displayLat: Double = 0.0
     private var displayLon: Double = 0.0
 
@@ -61,6 +60,7 @@ class MainActivity : FlutterActivity() {
                 when (call.method) {
                     "isMockLocationEnabled" -> result.success(isMockLocationEnabled())
                     "openDeveloperSettings" -> { openDeveloperSettings(); result.success(null) }
+                    "isMockRunning" -> result.success(isMockRunning)
                     "startMock" -> {
                         val lat = call.argument<Double>("latitude") ?: 0.0
                         val lon = call.argument<Double>("longitude") ?: 0.0
@@ -77,6 +77,19 @@ class MainActivity : FlutterActivity() {
                         result.success(updateMock(lat, lon, acc, alt))
                     }
                     "stopMock" -> result.success(stopMock())
+                    "getRealLocation" -> {
+                        val loc = getBestRealLocation()
+                        if (loc == null) {
+                            result.success(null)
+                        } else {
+                            result.success(mapOf(
+                                "latitude" to loc.latitude,
+                                "longitude" to loc.longitude,
+                                "accuracy" to loc.accuracy.toDouble(),
+                                "ageMs" to (System.currentTimeMillis() - loc.time)
+                            ))
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -177,7 +190,35 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    // ---------- Mock: провайдеры ----------
+    // ---------- Реальная локация ----------
+
+    /**
+     * Возвращает самую свежую и точную из last-known локаций.
+     * Если ничего нет — null.
+     */
+    private fun getBestRealLocation(): Location? {
+        val lm = locationManager ?: return null
+        var best: Location? = null
+        for (p in providers) {
+            val loc = try { lm.getLastKnownLocation(p) } catch (_: Exception) { null } ?: continue
+            if (best == null) {
+                best = loc
+                continue
+            }
+            // Приоритет: свежее и точнее
+            val ageDiff = best.time - loc.time
+            if (ageDiff > 10_000) {
+                best = loc
+                continue
+            }
+            if (loc.accuracy < best.accuracy) {
+                best = loc
+            }
+        }
+        return best
+    }
+
+    // ---------- Mock ----------
 
     private fun ensureProvider(providerName: String) {
         val lm = locationManager ?: return
@@ -226,21 +267,12 @@ class MainActivity : FlutterActivity() {
         return loc
     }
 
-    // ---------- Джиттер (реалистичное дрожание GPS) ----------
-
-    /**
-     * Небольшой случайный сдвиг от базы. Максимальное отклонение
-     * — около [maxOffsetMeters]. Распределение — нормальное-ish,
-     * но простое: сумма двух равномерных.
-     */
     private fun applyJitter(offsetMeters: Double = 2.5) {
-        // Отклонение в метрах (в среднем меньше 2-3 м, изредка больше)
         val r = Random.nextDouble(-1.0, 1.0) + Random.nextDouble(-1.0, 1.0)
         val angle = Random.nextDouble(0.0, 2 * Math.PI)
         val dx = r * offsetMeters * cos(angle)
         val dy = r * offsetMeters * sin(angle)
 
-        // Перевод метров в градусы (приблизительно)
         val metersPerDegLat = 111_320.0
         val metersPerDegLon = 111_320.0 * cos(Math.toRadians(baseLat))
 
@@ -252,16 +284,13 @@ class MainActivity : FlutterActivity() {
         val lm = locationManager ?: return
         if (!isMockRunning) return
 
-        // Генерируем новый джиттер
         applyJitter()
 
-        // Точность плавает вокруг базовой: ±3 м
         val jitterAcc = baseAcc + Random.nextDouble(-3.0, 3.0)
         val acc = jitterAcc.coerceAtLeast(1.0)
 
-        // Микро-скорость и курс — как у реального GPS в покое
-        val speed = Random.nextFloat() * 0.4f       // 0 – 0.4 м/с
-        val bearing = Random.nextFloat() * 360f     // любой курс
+        val speed = Random.nextFloat() * 0.4f
+        val bearing = Random.nextFloat() * 360f
 
         try {
             for (p in providers) {
@@ -270,8 +299,6 @@ class MainActivity : FlutterActivity() {
             }
         } catch (_: Exception) {}
     }
-
-    // ---------- Старт / стоп мока ----------
 
     private fun startMock(lat: Double, lon: Double, acc: Double, alt: Double, intervalMs: Long): Boolean {
         return try {
@@ -297,7 +324,6 @@ class MainActivity : FlutterActivity() {
         val r = object : Runnable {
             override fun run() {
                 pushLocation()
-                // Случайный интервал: ±30% от базового
                 val jitter = baseIntervalMs * (0.7 + Random.nextDouble() * 0.6)
                 handler?.postDelayed(this, jitter.toLong())
             }
