@@ -33,7 +33,6 @@ class OverlayService : Service() {
         const val NOTIFICATION_ID = 4201
         const val CHANNEL_ID = "fmagnit_overlay"
 
-        // Стиль под тёмный интерфейс Магнит.Доставка
         private const val COLOR_BG = 0xEE0A0A0A.toInt()
         private const val COLOR_ACCENT = 0xFFE30613.toInt()
         private const val COLOR_TEXT = 0xFFFFFFFF.toInt()
@@ -71,20 +70,41 @@ class OverlayService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+
+        // Загружаем сохранённое состояние
+        currentPointsJson = OverlayPrefs.loadPoints(this)
+        currentActiveId = OverlayPrefs.loadActiveId(this)
+        isRunning = OverlayPrefs.loadRunning(this)
+
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
 
         OverlayBridge.setOverlayRunning(true)
+        OverlayBridge.onOverlayStateChanged {
+            handler.post { applyVisibility() }
+        }
+
         buildOverlayView()
+        applyVisibility()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_STOP -> { stopSelf(); return START_NOT_STICKY }
+            ACTION_STOP -> {
+                OverlayPrefs.saveServiceOn(this, false)
+                stopSelf()
+                return START_NOT_STICKY
+            }
             ACTION_UPDATE_POINTS -> {
-                intent.getStringExtra(EXTRA_POINTS_JSON)?.let { currentPointsJson = it }
-                intent.getStringExtra(EXTRA_ACTIVE_ID)?.let { currentActiveId = it }
+                intent.getStringExtra(EXTRA_POINTS_JSON)?.let {
+                    currentPointsJson = it
+                    OverlayPrefs.savePoints(this, it)
+                }
+                intent.getStringExtra(EXTRA_ACTIVE_ID)?.let {
+                    currentActiveId = it
+                    OverlayPrefs.saveActiveId(this, it)
+                }
                 handler.post { rebuildContent() }
             }
         }
@@ -92,6 +112,7 @@ class OverlayService : Service() {
     }
 
     override fun onDestroy() {
+        OverlayBridge.onOverlayStateChanged {}
         try { rootView?.let { windowManager?.removeView(it) } } catch (_: Exception) {}
         rootView = null
         OverlayBridge.setOverlayRunning(false)
@@ -178,7 +199,7 @@ class OverlayService : Service() {
         }
 
         activeLabel = TextView(ctx).apply {
-            text = "не выбрано"
+            text = currentActiveNameOrPlaceholder()
             setTextColor(COLOR_MUTED)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             setPadding(0, 0, dp(12), 0)
@@ -232,12 +253,12 @@ class OverlayService : Service() {
         rebuildContent()
     }
 
-    /**
-     * Различает тап и drag:
-     * - тап: короткое касание (< 300мс) без смещения (> 10px) → toggleExpanded
-     * - drag: смещение > 10px → двигаем окно
-     * - удержание без движения > 500мс → игнорируем (не раскрываем)
-     */
+    private fun currentActiveNameOrPlaceholder(): String {
+        val id = currentActiveId ?: return "не выбрано"
+        return parsePoints(currentPointsJson).firstOrNull { it.first == id }?.second
+            ?: "не выбрано"
+    }
+
     private fun attachHeaderGestures(view: View) {
         var downTime = 0L
         var initialY = 0
@@ -273,9 +294,7 @@ class OverlayService : Service() {
                         toggleExpanded()
                         handled = true
                         true
-                    } else {
-                        false
-                    }
+                    } else false
                 }
                 MotionEvent.ACTION_CANCEL -> {
                     handled = true
@@ -302,6 +321,7 @@ class OverlayService : Service() {
 
         container.visibility = if (expanded) View.VISIBLE else View.GONE
         arrowView?.text = if (expanded) "▼" else "▲"
+        activeLabel?.text = currentActiveNameOrPlaceholder()
         applyDotColor()
 
         if (!expanded) return
@@ -331,6 +351,7 @@ class OverlayService : Service() {
                     setPadding(dp(4), dp(12), dp(4), dp(12))
                     setOnClickListener {
                         currentActiveId = id
+                        OverlayPrefs.saveActiveId(this@OverlayService, id)
                         activeLabel?.text = name
                         rebuildContent()
                     }
@@ -357,6 +378,7 @@ class OverlayService : Service() {
                 val id = currentActiveId
                 if (id != null) {
                     isRunning = true
+                    OverlayPrefs.saveRunning(this@OverlayService, true)
                     sendBroadcast(Intent(ACTION_POINT_START).apply {
                         setPackage(packageName); putExtra("id", id)
                     })
@@ -378,6 +400,7 @@ class OverlayService : Service() {
             background = roundedBg(COLOR_INACTIVE, 14)
             setOnClickListener {
                 isRunning = false
+                OverlayPrefs.saveRunning(this@OverlayService, false)
                 sendBroadcast(Intent(ACTION_POINT_STOP).apply { setPackage(packageName) })
                 rebuildContent()
             }
@@ -403,6 +426,11 @@ class OverlayService : Service() {
             }
             out
         } catch (_: Exception) { emptyList() }
+    }
+
+    private fun applyVisibility() {
+        val v = rootView ?: return
+        v.visibility = if (OverlayBridge.isTargetAppForeground) View.VISIBLE else View.GONE
     }
 }
 
