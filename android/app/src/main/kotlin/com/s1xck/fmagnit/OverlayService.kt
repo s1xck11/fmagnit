@@ -427,6 +427,7 @@ class OverlayService : Service() {
             setOnClickListener {
                 isRunning = false
                 OverlayPrefs.saveRunning(this@OverlayService, false)
+                // Broadcast, MainActivity сам сделает forceResetMock()
                 sendBroadcast(Intent(ACTION_POINT_STOP).apply { setPackage(packageName) })
                 rebuildContent()
             }
