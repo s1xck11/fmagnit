@@ -38,7 +38,6 @@ class MockLocationService {
     await _channel.invokeMethod('openDeveloperSettings');
   }
 
-  /// Запущен ли mock сейчас — нативный флаг.
   Future<bool> isMockRunning() async {
     final r = await _channel.invokeMethod<bool>('isMockRunning');
     return r ?? false;
@@ -81,8 +80,15 @@ class MockLocationService {
     return result ?? false;
   }
 
-  /// Возвращает реальную позицию или null, если её нет.
-  /// Использовать только когда mock НЕ запущен — иначе вернёт mock-точку.
+  /// Жёсткий сброс mock. Вызывать:
+  /// - при старте приложения,
+  /// - по кнопке "Восстановить GPS",
+  /// - при проблемах с залипшей координатой.
+  Future<bool> forceResetMock() async {
+    final result = await _channel.invokeMethod<bool>('forceResetMock');
+    return result ?? false;
+  }
+
   Future<RealLocation?> getRealLocation() async {
     final raw = await _channel.invokeMethod('getRealLocation');
     if (raw == null) return null;
