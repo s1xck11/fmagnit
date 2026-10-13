@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -28,12 +29,32 @@ class _HomePageState extends State<HomePage> {
   bool _accessPerm = false;
   String? _activeId;
 
+  Timer? _stateTimer;
+
   @override
   void initState() {
     super.initState();
     _load();
     _refreshPermissions();
     _overlay.setStartHandler(_onOverlayStartRequested);
+
+    _stateTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      _pollOverlayState();
+    });
+  }
+
+  @override
+  void dispose() {
+    _stateTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _pollOverlayState() async {
+    final running = await _overlay.isOverlayRunning();
+    if (!mounted) return;
+    if (running != _overlayRunning) {
+      setState(() => _overlayRunning = running);
+    }
   }
 
   Future<void> _onOverlayStartRequested(String id) async {
@@ -90,8 +111,10 @@ class _HomePageState extends State<HomePage> {
       await _overlay.stopOverlay();
     } else {
       await _overlay.startOverlay();
+      await Future.delayed(const Duration(milliseconds: 400));
       await _pushPointsToOverlay();
     }
+    await Future.delayed(const Duration(milliseconds: 600));
     await _refreshPermissions();
   }
 
@@ -138,9 +161,7 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('fmagnit'),
-      ),
+      appBar: AppBar(title: const Text('fmagnit')),
       floatingActionButton: FloatingActionButton(
         onPressed: _addWaypoint,
         child: const Icon(Icons.add),
