@@ -7,6 +7,12 @@ import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
 
+/**
+ * Основной детектор переднего плана.
+ * 1. Пробует UsageStatsManager — работает на EMUI, MIUI и т.п.
+ * 2. Если Usage Access не выдан — падает на Accessibility.getWindows().
+ * 3. Если оба молчат — оставляем предыдущее состояние (не мигаем).
+ */
 class MainAccessibilityService : AccessibilityService() {
 
     private val handler = Handler(Looper.getMainLooper())
@@ -20,8 +26,6 @@ class MainAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-
-        // Принудительно включаем нужные флаги — на случай, если XML не подхватился
         try {
             val info = serviceInfo ?: AccessibilityServiceInfo()
             info.eventTypes = AccessibilityEvent.TYPES_ALL_MASK
@@ -33,7 +37,6 @@ class MainAccessibilityService : AccessibilityService() {
             serviceInfo = info
         } catch (_: Exception) {
         }
-
         startPolling()
         refreshTargetState()
     }
@@ -64,11 +67,21 @@ class MainAccessibilityService : AccessibilityService() {
     private fun refreshTargetState() {
         val target = OverlayBridge.TARGET_PACKAGE
 
-        val isTarget = checkWindows(target)
-            || checkRootActive(target)
-            || checkFocus(target)
+        // 1. UsageStats — основной путь
+        val usagePkg = ForegroundDetector.getForegroundPackage(this)
+        if (usagePkg != null) {
+            OverlayBridge.setTargetForeground(usagePkg == target)
+            return
+        }
 
-        OverlayBridge.setTargetForeground(isTarget)
+        // 2. Accessibility windows — резервный
+        if (checkWindows(target) || checkRootActive(target) || checkFocus(target)) {
+            OverlayBridge.setTargetForeground(true)
+            return
+        }
+
+        // 3. Не смогли определить — оставляем как было, не трогаем флаг.
+        //    (Никаких false — чтобы не мигало.)
     }
 
     private fun checkWindows(target: String): Boolean {
@@ -87,8 +100,7 @@ class MainAccessibilityService : AccessibilityService() {
 
     private fun checkRootActive(target: String): Boolean {
         return try {
-            val active = rootInActiveWindow
-            active?.packageName?.toString() == target
+            rootInActiveWindow?.packageName?.toString() == target
         } catch (_: Exception) {
             false
         }
@@ -96,10 +108,8 @@ class MainAccessibilityService : AccessibilityService() {
 
     private fun checkFocus(target: String): Boolean {
         return try {
-            val focused = findFocus(
-                android.view.accessibility.AccessibilityNodeInfo.FOCUS_ACCESSIBILITY
-            )
-            focused?.packageName?.toString() == target
+            findFocus(android.view.accessibility.AccessibilityNodeInfo.FOCUS_ACCESSIBILITY)
+                ?.packageName?.toString() == target
         } catch (_: Exception) {
             false
         }
