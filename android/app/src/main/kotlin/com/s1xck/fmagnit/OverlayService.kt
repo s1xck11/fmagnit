@@ -71,7 +71,6 @@ class OverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
 
-        // Загружаем сохранённое состояние
         currentPointsJson = OverlayPrefs.loadPoints(this)
         currentActiveId = OverlayPrefs.loadActiveId(this)
         isRunning = OverlayPrefs.loadRunning(this)
@@ -259,6 +258,11 @@ class OverlayService : Service() {
             ?: "не выбрано"
     }
 
+    /**
+     * Важно: из ACTION_DOWN возвращаем TRUE, чтобы система отдала нам
+     * все последующие события (MOVE/UP) в этой серии. Иначе UP может уйти
+     * не нам, и тап не сработает.
+     */
     private fun attachHeaderGestures(view: View) {
         var downTime = 0L
         var initialY = 0
@@ -274,7 +278,7 @@ class OverlayService : Service() {
                     initialTouchY = event.rawY
                     moved = false
                     handled = false
-                    false
+                    true // ← вот ключевая правка
                 }
                 MotionEvent.ACTION_MOVE -> {
                     if (handled) return@setOnTouchListener true
@@ -284,7 +288,7 @@ class OverlayService : Service() {
                         layoutParams?.y = initialY - dy.toInt()
                         try { windowManager?.updateViewLayout(rootView, layoutParams) } catch (_: Exception) {}
                     }
-                    moved
+                    true
                 }
                 MotionEvent.ACTION_UP -> {
                     if (handled) return@setOnTouchListener true
@@ -293,8 +297,8 @@ class OverlayService : Service() {
                     if (isTap) {
                         toggleExpanded()
                         handled = true
-                        true
-                    } else false
+                    }
+                    true
                 }
                 MotionEvent.ACTION_CANCEL -> {
                     handled = true
