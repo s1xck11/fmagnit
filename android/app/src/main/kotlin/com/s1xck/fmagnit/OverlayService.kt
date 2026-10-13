@@ -370,3 +370,210 @@ class OverlayService : Service() {
         val ctx = this
         val c = orderContainer ?: return
         c.removeAllViews()
+
+        val order = OrderTargetStore.load(this)
+        if (order == null) {
+            c.visibility = View.GONE
+            return
+        }
+        c.visibility = View.VISIBLE
+
+        val (lat, lon) = order
+
+        c.addView(View(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(1)
+            ).also { it.topMargin = dp(10); it.bottomMargin = dp(10) }
+            setBackgroundColor(0x22FFFFFF)
+        })
+
+        c.addView(TextView(ctx).apply {
+            text = "Заказ клиента"
+            setTextColor(COLOR_ACCENT)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(0, 0, 0, dp(4))
+        })
+
+        c.addView(TextView(ctx).apply {
+            text = String.format(Locale.US, "%.6f, %.6f", lat, lon)
+            setTextColor(COLOR_TEXT)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setPadding(0, 0, 0, dp(10))
+        })
+
+        val row = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        val goBtn = TextView(ctx).apply {
+            text = "ПЕРЕЙТИ"
+            setTextColor(COLOR_TEXT)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            background = roundedBg(COLOR_ACCENT, 14)
+            setOnClickListener {
+                OrderTargetStore.save(this@OverlayService, lat, lon)
+                sendBroadcast(Intent(ACTION_POINT_START).apply {
+                    setPackage(packageName); putExtra("id", "__order__")
+                })
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
+            ).also { it.rightMargin = dp(6) }
+        }
+
+        val closeBtn = TextView(ctx).apply {
+            text = "ЗАКРЫТЬ"
+            setTextColor(COLOR_TEXT)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            background = roundedBg(COLOR_INACTIVE, 14)
+            setOnClickListener {
+                OrderTargetStore.clear(this@OverlayService)
+                rebuildContent()
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
+            ).also { it.leftMargin = dp(6) }
+        }
+
+        row.addView(goBtn)
+        row.addView(closeBtn)
+        c.addView(row)
+    }
+
+    private fun rebuildContent() {
+        val ctx = this
+        val container = contentContainer ?: return
+        container.removeAllViews()
+
+        container.visibility = if (expanded) View.VISIBLE else View.GONE
+        arrowView?.text = if (expanded) "▼" else "▲"
+        activeLabel?.text = currentActiveNameOrPlaceholder()
+        applyDotColor()
+
+        rebuildOrderBlock()
+
+        if (!expanded) return
+
+        container.addView(View(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(1)
+            ).also { it.topMargin = dp(12); it.bottomMargin = dp(8) }
+            setBackgroundColor(0x22FFFFFF)
+        })
+
+        val points = parsePoints(currentPointsJson)
+        if (points.isEmpty()) {
+            container.addView(TextView(ctx).apply {
+                text = "Нет точек. Добавь в fmagnit."
+                setTextColor(COLOR_MUTED)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                setPadding(0, dp(6), 0, dp(6))
+            })
+        } else {
+            points.forEach { (id, name) ->
+                val isActive = id == currentActiveId
+                val row = TextView(ctx).apply {
+                    text = (if (isActive) "● " else "○ ") + name
+                    setTextColor(if (isActive) COLOR_ACCENT else COLOR_TEXT)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+                    setPadding(dp(4), dp(12), dp(4), dp(12))
+                    setOnClickListener {
+                        currentActiveId = id
+                        OverlayPrefs.saveActiveId(this@OverlayService, id)
+                        activeLabel?.text = name
+                        rebuildContent()
+                    }
+                }
+                container.addView(row)
+            }
+        }
+
+        val buttonsRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(12), 0, dp(4))
+        }
+
+        val playBtn = TextView(ctx).apply {
+            text = if (isRunning) "ЗАПУЩЕНО" else "СТАРТ"
+            setTextColor(COLOR_TEXT)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            background = roundedBg(COLOR_ACCENT, 14)
+            setOnClickListener {
+                val id = currentActiveId
+                if (id != null) {
+                    isRunning = true
+                    OverlayPrefs.saveRunning(this@OverlayService, true)
+                    sendBroadcast(Intent(ACTION_POINT_START).apply {
+                        setPackage(packageName); putExtra("id", id)
+                    })
+                    rebuildContent()
+                }
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
+            ).also { it.rightMargin = dp(8) }
+        }
+
+        val stopBtn = TextView(ctx).apply {
+            text = "СТОП"
+            setTextColor(COLOR_TEXT)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            background = roundedBg(COLOR_INACTIVE, 14)
+            setOnClickListener {
+                isRunning = false
+                OverlayPrefs.saveRunning(this@OverlayService, false)
+                sendBroadcast(Intent(ACTION_POINT_STOP).apply { setPackage(packageName) })
+                rebuildContent()
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
+            ).also { it.leftMargin = dp(8) }
+        }
+
+        buttonsRow.addView(playBtn)
+        buttonsRow.addView(stopBtn)
+        container.addView(buttonsRow)
+    }
+
+    private fun parsePoints(json: String): List<Pair<String, String>> {
+        return try {
+            val arr = JSONArray(json)
+            val out = ArrayList<Pair<String, String>>(arr.length())
+            for (i in 0 until arr.length()) {
+                val obj: JSONObject = arr.getJSONObject(i)
+                val id = obj.optString("id", "")
+                val name = obj.optString("name", "точка")
+                if (id.isNotEmpty()) out.add(id to name)
+            }
+            out
+        } catch (_: Exception) { emptyList() }
+    }
+
+    private fun applyVisibility() {
+        val v = rootView ?: return
+        val usageOk = ForegroundDetector.hasUsageAccess(this)
+        if (!usageOk) {
+            v.visibility = View.VISIBLE
+            return
+        }
+        v.visibility = if (OverlayBridge.isTargetAppForeground) View.VISIBLE else View.GONE
+    }
+}
+
+const val ACTION_POINT_START = "com.s1xck.fmagnit.POINT_START"
+const val ACTION_POINT_STOP = "com.s1xck.fmagnit.POINT_STOP"
