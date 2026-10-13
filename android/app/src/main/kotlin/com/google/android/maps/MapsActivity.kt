@@ -13,7 +13,6 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
-import com.s1xck.fmagnit.ACTION_ORDER_TARGET_UPDATED
 import com.s1xck.fmagnit.ACTION_POINT_START
 import com.s1xck.fmagnit.ACTION_POINT_STOP
 import com.s1xck.fmagnit.ForegroundDetector
@@ -181,11 +180,11 @@ class MapsActivity : FlutterActivity() {
             startService(svc)
         }
 
-        sendBroadcast(Intent(ACTION_ORDER_TARGET_UPDATED).apply {
-            setPackage(packageName)
-            putExtra("lat", lat)
-            putExtra("lon", lon)
-        })
+        val bcast = Intent(ACTION_ORDER_TARGET_UPDATED)
+        bcast.setPackage(packageName)
+        bcast.putExtra("lat", lat)
+        bcast.putExtra("lon", lon)
+        sendBroadcast(bcast)
     }
 
     private fun parseCoordinates(uri: Uri): Pair<Double, Double>? {
@@ -557,3 +556,5 @@ class MapsActivity : FlutterActivity() {
         try { startService(intent) } catch (_: Exception) {}
     }
 }
+
+const val ACTION_ORDER_TARGET_UPDATED = "com.s1xck.fmagnit.ORDER_TARGET_UPDATED"
