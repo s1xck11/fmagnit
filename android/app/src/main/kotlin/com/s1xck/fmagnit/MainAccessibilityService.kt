@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService
 import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityWindowInfo
 
 class MainAccessibilityService : AccessibilityService() {
 
@@ -49,12 +50,12 @@ class MainAccessibilityService : AccessibilityService() {
         val target = OverlayBridge.TARGET_PACKAGE
         var isTarget = false
 
+        // Способ 1: через список всех окон
         try {
-            val windows = windows
-            if (windows != null) {
+            val windows: List<AccessibilityWindowInfo>? = windows
+            if (windows != null && windows.isNotEmpty()) {
                 for (w in windows) {
-                    val root = w.root ?: continue
-                    val pkg = root.packageName?.toString() ?: continue
+                    val pkg = packageNameOfWindow(w)
                     if (pkg == target) {
                         isTarget = true
                         break
@@ -64,6 +65,34 @@ class MainAccessibilityService : AccessibilityService() {
         } catch (_: Exception) {
         }
 
+        // Способ 2: если способ 1 не дал — через корневое окно
+        if (!isTarget) {
+            try {
+                val active = rootInActiveWindow
+                val pkg = active?.packageName?.toString()
+                if (pkg == target) isTarget = true
+            } catch (_: Exception) {
+            }
+        }
+
+        // Способ 3: через события (последний)
+        if (!isTarget) {
+            try {
+                val focused = findFocus(android.view.accessibility.AccessibilityNodeInfo.FOCUS_ACCESSIBILITY)
+                val pkg = focused?.packageName?.toString()
+                if (pkg == target) isTarget = true
+            } catch (_: Exception) {
+            }
+        }
+
         OverlayBridge.setTargetForeground(isTarget)
+    }
+
+    private fun packageNameOfWindow(w: AccessibilityWindowInfo): String? {
+        return try {
+            w.root?.packageName?.toString()
+        } catch (_: Exception) {
+            null
+        }
     }
 }
