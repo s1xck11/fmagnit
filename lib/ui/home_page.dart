@@ -7,6 +7,7 @@ import '../models/waypoint.dart';
 import '../services/mock_location_service.dart';
 import '../services/overlay_service.dart';
 import '../storage/waypoint_storage.dart';
+import 'import_export_dialogs.dart';
 import 'mock_test_panel.dart';
 
 class HomePage extends StatefulWidget {
@@ -131,9 +132,7 @@ class _HomePageState extends State<HomePage> {
     await _load();
   }
 
-  /// Пункт 1: сохранить текущее реальное местоположение.
   Future<void> _addCurrentLocation() async {
-    // Проверяем, не запущен ли mock — иначе сохраним поддельную точку
     final mockRunning = await _mock.isMockRunning();
     if (mockRunning) {
       if (!mounted) return;
@@ -210,6 +209,23 @@ class _HomePageState extends State<HomePage> {
     await _load();
   }
 
+  Future<void> _exportPoints() async {
+    if (_waypoints.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Нет точек для экспорта')),
+      );
+      return;
+    }
+    await showExportDialog(context, _waypoints);
+  }
+
+  Future<void> _importPoints() async {
+    final changed = await showImportDialog(context, _storage);
+    if (changed) {
+      await _load();
+    }
+  }
+
   Widget _statusChip(String label, bool ok) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -227,7 +243,21 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('fmagnit')),
+      appBar: AppBar(
+        title: const Text('fmagnit'),
+        actions: [
+          IconButton(
+            onPressed: _importPoints,
+            icon: const Icon(Icons.file_download_outlined),
+            tooltip: 'Импорт точек',
+          ),
+          IconButton(
+            onPressed: _exportPoints,
+            icon: const Icon(Icons.file_upload_outlined),
+            tooltip: 'Экспорт точек',
+          ),
+        ],
+      ),
       floatingActionButton: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.end,
