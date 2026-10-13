@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../main.dart';
+
 enum SortMode {
   byDate,
   byName,
@@ -30,7 +32,6 @@ extension SortModeLabel on SortMode {
   }
 }
 
-/// Показывает меню выбора сортировки. Возвращает выбранный режим или null.
 Future<SortMode?> showSortMenu(BuildContext context, SortMode current) async {
   return showModalBottomSheet<SortMode>(
     context: context,
@@ -39,17 +40,37 @@ Future<SortMode?> showSortMenu(BuildContext context, SortMode current) async {
         mainAxisSize: MainAxisSize.min,
         children: [
           const Padding(
-            padding: EdgeInsets.symmetric(vertical: 12),
+            padding: EdgeInsets.symmetric(vertical: 16),
             child: Text(
               'Сортировка',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+                color: FMagnitTheme.textPrimary,
+              ),
             ),
           ),
           for (final m in SortMode.values)
             ListTile(
-              leading: Icon(m.icon),
-              title: Text(m.label),
-              trailing: m == current ? const Icon(Icons.check) : null,
+              leading: Icon(
+                m.icon,
+                color: m == current
+                    ? FMagnitTheme.accent
+                    : FMagnitTheme.textMuted,
+              ),
+              title: Text(
+                m.label,
+                style: TextStyle(
+                  color: m == current
+                      ? FMagnitTheme.accent
+                      : FMagnitTheme.textPrimary,
+                  fontWeight:
+                      m == current ? FontWeight.bold : FontWeight.normal,
+                ),
+              ),
+              trailing: m == current
+                  ? const Icon(Icons.check, color: FMagnitTheme.accent)
+                  : null,
               onTap: () => Navigator.of(ctx).pop(m),
             ),
           const SizedBox(height: 8),
