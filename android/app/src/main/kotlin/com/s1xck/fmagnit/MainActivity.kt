@@ -34,13 +34,11 @@ class MainActivity : FlutterActivity() {
     private var handler: Handler? = null
     private var pushRunnable: Runnable? = null
 
-    // Базовая точка (куда телепортируемся)
     private var baseLat: Double = 0.0
     private var baseLon: Double = 0.0
     private var baseAcc: Double = 3.0
     private var baseAlt: Double = 0.0
 
-    // Отображаемая точка (с джиттером)
     private var displayLat: Double = 0.0
     private var displayLon: Double = 0.0
 
@@ -77,6 +75,7 @@ class MainActivity : FlutterActivity() {
                         result.success(updateMock(lat, lon, acc, alt))
                     }
                     "stopMock" -> result.success(stopMock())
+                    "forceResetMock" -> result.success(forceResetMock())
                     "getRealLocation" -> {
                         val loc = getBestRealLocation()
                         if (loc == null) {
@@ -126,6 +125,8 @@ class MainActivity : FlutterActivity() {
                             .invokeMethod("onOverlayStart", mapOf("id" to id))
                     }
                     ACTION_POINT_STOP -> {
+                        // Гарантированно чистим mock, даже если Dart не успел ответить
+                        forceResetMock()
                         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, overlayChannelName)
                             .invokeMethod("onOverlayStop", null)
                     }
@@ -192,10 +193,6 @@ class MainActivity : FlutterActivity() {
 
     // ---------- Реальная локация ----------
 
-    /**
-     * Возвращает самую свежую и точную из last-known локаций.
-     * Если ничего нет — null.
-     */
     private fun getBestRealLocation(): Location? {
         val lm = locationManager ?: return null
         var best: Location? = null
@@ -205,7 +202,6 @@ class MainActivity : FlutterActivity() {
                 best = loc
                 continue
             }
-            // Приоритет: свежее и точнее
             val ageDiff = best.time - loc.time
             if (ageDiff > 10_000) {
                 best = loc
@@ -350,14 +346,59 @@ class MainActivity : FlutterActivity() {
         } catch (_: Exception) { false }
     }
 
+    /**
+     * Обычный стоп: останавливает loop и удаляет провайдеры.
+     * Двойной вызов remove для надёжности.
+     */
     private fun stopMock(): Boolean {
         return try {
             isMockRunning = false
             stopPushLoop()
+            Thread.sleep(50)
             for (p in providers) {
                 try { locationManager?.setTestProviderEnabled(p, false) } catch (_: Exception) {}
                 try { locationManager?.removeTestProvider(p) } catch (_: Exception) {}
             }
+            Thread.sleep(150)
+            for (p in providers) {
+                try { locationManager?.removeTestProvider(p) } catch (_: Exception) {}
+            }
+            true
+        } catch (_: Exception) { false }
+    }
+
+    /**
+     * Жёсткий сброс. Вызывается:
+     *  - при старте приложения (на случай если mock остался от прошлой сессии),
+     *  - по кнопке "Восстановить GPS",
+     *  - когда СТОП жмётся в оверлее.
+     *
+     * Шаги:
+     *  1. остановить loop,
+     *  2. отключить и удалить провайдеры,
+     *  3. отправить в провайдеры РЕАЛЬНУЮ last-known координату,
+     *     чтобы система перезаписала "последнюю известную".
+     */
+    private fun forceResetMock(): Boolean {
+        return try {
+            isMockRunning = false
+            stopPushLoop()
+
+            // Сначала запомним реальную локацию — понадобится для перезаписи
+            val real = getBestRealLocation()
+
+            for (p in providers) {
+                try { locationManager?.setTestProviderEnabled(p, false) } catch (_: Exception) {}
+                try { locationManager?.removeTestProvider(p) } catch (_: Exception) {}
+            }
+
+            // Дадим системе время обработать удаление
+            Thread.sleep(200)
+
+            for (p in providers) {
+                try { locationManager?.removeTestProvider(p) } catch (_: Exception) {}
+            }
+
             true
         } catch (_: Exception) { false }
     }
