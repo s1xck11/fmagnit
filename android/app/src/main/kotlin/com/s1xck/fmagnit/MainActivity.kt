@@ -271,4 +271,34 @@ class MainActivity : FlutterActivity() {
             return
         }
         OverlayPrefs.saveServiceOn(this, true)
-        val intent = Intent(this, OverlayService::
+        val intent = Intent(this, OverlayService::class.java).apply {
+            action = OverlayService.ACTION_START
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
+    }
+
+    private fun stopOverlayService() {
+        OverlayPrefs.saveServiceOn(this, false)
+        val intent = Intent(this, OverlayService::class.java).apply {
+            action = OverlayService.ACTION_STOP
+        }
+        startService(intent)
+    }
+
+    private fun updateOverlayPoints(json: String, activeId: String?) {
+        OverlayService.currentPointsJson = json
+        if (activeId != null) OverlayService.currentActiveId = activeId
+        OverlayPrefs.savePoints(this, json)
+        if (activeId != null) OverlayPrefs.saveActiveId(this, activeId)
+        val intent = Intent(this, OverlayService::class.java).apply {
+            action = OverlayService.ACTION_UPDATE_POINTS
+            putExtra(OverlayService.EXTRA_POINTS_JSON, json)
+            if (activeId != null) putExtra(OverlayService.EXTRA_ACTIVE_ID, activeId)
+        }
+        try { startService(intent) } catch (_: Exception) {}
+    }
+}
