@@ -1,14 +1,12 @@
 package com.s1xck.fmagnit
 
-/**
- * Синглтон-мост между AccessibilityService и OverlayService.
- */
 object OverlayBridge {
     const val TARGET_PACKAGE = "com.magnit.delivery.courier"
 
-    // По умолчанию — СКРЫТО. Показываем только когда точно уверены.
+    // По умолчанию — показываем. Если детектор уверенно скажет «не Магнит» — скроет.
+    // Это защита от «оверлей не виден вообще» на EMUI.
     @Volatile
-    var isTargetAppForeground: Boolean = false
+    var isTargetAppForeground: Boolean = true
         private set
 
     @Volatile
