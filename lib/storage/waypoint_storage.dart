@@ -50,4 +50,66 @@ class WaypointStorage {
     list.removeWhere((w) => w.id == id);
     await saveAll(list);
   }
+
+  /// Импорт точек из JSON-строки. Возвращает (добавлено, пропущено).
+  /// Дубликаты определяются по координатам, округлённым до 6 знаков.
+  Future<ImportResult> importFromJson(String jsonString) async {
+    final existing = await loadAll();
+    final existingKeys = existing.map(_dupKey).toSet();
+
+    final List<dynamic> data;
+    try {
+      final decoded = jsonDecode(jsonString);
+      if (decoded is List) {
+        data = decoded;
+      } else if (decoded is Map<String, dynamic> && decoded['waypoints'] is List) {
+        // Допускаем обёртку { "waypoints": [...] }
+        data = decoded['waypoints'] as List;
+      } else {
+        throw const FormatException('Ожидался массив точек');
+      }
+    } catch (e) {
+      return ImportResult(added: 0, skipped: 0, error: 'Некорректный JSON: $e');
+    }
+
+    int added = 0;
+    int skipped = 0;
+
+    for (final raw in data) {
+      try {
+        if (raw is! Map<String, dynamic>) {
+          skipped++;
+          continue;
+        }
+        final w = Waypoint.fromJson(raw);
+        final key = _dupKey(w);
+        if (existingKeys.contains(key)) {
+          skipped++;
+          continue;
+        }
+        existing.add(w);
+        existingKeys.add(key);
+        added++;
+      } catch (_) {
+        skipped++;
+      }
+    }
+
+    await saveAll(existing);
+    return ImportResult(added: added, skipped: skipped);
+  }
+
+  String _dupKey(Waypoint w) {
+    final lat = w.latitude.toStringAsFixed(6);
+    final lon = w.longitude.toStringAsFixed(6);
+    return '$lat|$lon';
+  }
+}
+
+class ImportResult {
+  final int added;
+  final int skipped;
+  final String? error;
+
+  ImportResult({required this.added, required this.skipped, this.error});
 }
