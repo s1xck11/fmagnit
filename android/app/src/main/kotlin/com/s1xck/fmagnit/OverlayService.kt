@@ -47,6 +47,8 @@ class OverlayService : Service() {
 
         @Volatile var currentPointsJson: String = "[]"
         @Volatile var currentActiveId: String? = null
+
+        @Volatile var instanceAlive: Boolean = false
     }
 
     private var windowManager: WindowManager? = null
@@ -57,6 +59,7 @@ class OverlayService : Service() {
     private var isRunning = false
 
     private val handler = Handler(Looper.getMainLooper())
+    private var visibilityRunnable: Runnable? = null
 
     private var contentContainer: LinearLayout? = null
     private var activeLabel: TextView? = null
@@ -67,6 +70,7 @@ class OverlayService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        instanceAlive = true
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
@@ -77,8 +81,8 @@ class OverlayService : Service() {
         }
 
         buildOverlayView()
+        startVisibilityLoop()
 
-        // Принудительно показать сразу — на случай если Accessibility уже видит Магнит
         applyVisibility()
         handler.postDelayed({ applyVisibility() }, 800)
     }
@@ -96,11 +100,30 @@ class OverlayService : Service() {
     }
 
     override fun onDestroy() {
+        instanceAlive = false
+        stopVisibilityLoop()
         try { rootView?.let { windowManager?.removeView(it) } } catch (_: Exception) {}
         rootView = null
         OverlayBridge.setOverlayRunning(false)
         OverlayBridge.onOverlayStateChanged {}
         super.onDestroy()
+    }
+
+    private fun startVisibilityLoop() {
+        stopVisibilityLoop()
+        val r = object : Runnable {
+            override fun run() {
+                applyVisibility()
+                handler.postDelayed(this, 1000)
+            }
+        }
+        visibilityRunnable = r
+        handler.postDelayed(r, 1000)
+    }
+
+    private fun stopVisibilityLoop() {
+        visibilityRunnable?.let { handler.removeCallbacks(it) }
+        visibilityRunnable = null
     }
 
     private fun createNotificationChannel() {
@@ -234,7 +257,6 @@ class OverlayService : Service() {
 
         try {
             windowManager?.addView(root, layoutParams)
-            Toast.makeText(this, "Оверлей создан", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
             Toast.makeText(this, "Ошибка оверлея: ${e.message}", Toast.LENGTH_LONG).show()
         }
