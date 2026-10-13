@@ -14,6 +14,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
@@ -32,11 +33,14 @@ class OverlayService : Service() {
         const val NOTIFICATION_ID = 4201
         const val CHANNEL_ID = "fmagnit_overlay"
 
+        // Стиль под тёмный интерфейс Магнит.Доставка
         private const val COLOR_BG = 0xEE0A0A0A.toInt()
         private const val COLOR_ACCENT = 0xFFE30613.toInt()
         private const val COLOR_TEXT = 0xFFFFFFFF.toInt()
         private const val COLOR_MUTED = 0xFF9E9E9E.toInt()
         private const val COLOR_INACTIVE = 0xFF2A2A2A.toInt()
+        private const val COLOR_DOT_IDLE = 0xFFE30613.toInt()
+        private const val COLOR_DOT_ACTIVE = 0xFF00C853.toInt()
 
         const val ACTION_START = "com.s1xck.fmagnit.OVERLAY_START"
         const val ACTION_STOP = "com.s1xck.fmagnit.OVERLAY_STOP"
@@ -61,6 +65,7 @@ class OverlayService : Service() {
     private var contentContainer: LinearLayout? = null
     private var activeLabel: TextView? = null
     private var arrowView: TextView? = null
+    private var dotView: TextView? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -153,12 +158,11 @@ class OverlayService : Service() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             minimumHeight = dp(40)
-            setOnClickListener { toggleExpanded() }
         }
 
-        val dot = TextView(ctx).apply {
+        dotView = TextView(ctx).apply {
             text = "●"
-            setTextColor(COLOR_ACCENT)
+            setTextColor(COLOR_DOT_IDLE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             setPadding(0, 0, dp(10), 0)
         }
@@ -186,7 +190,7 @@ class OverlayService : Service() {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
         }
 
-        header.addView(dot)
+        header.addView(dotView)
         header.addView(title)
         header.addView(activeLabel)
         header.addView(arrowView)
@@ -198,7 +202,7 @@ class OverlayService : Service() {
         }
         root.addView(contentContainer)
 
-        attachDragHandler(header)
+        attachHeaderGestures(header)
 
         rootView = root
 
@@ -224,30 +228,58 @@ class OverlayService : Service() {
             Toast.makeText(this, "Ошибка оверлея: ${e.message}", Toast.LENGTH_LONG).show()
         }
 
+        applyDotColor()
         rebuildContent()
     }
 
-    private fun attachDragHandler(view: View) {
+    /**
+     * Различает тап и drag:
+     * - тап: короткое касание (< 300мс) без смещения (> 10px) → toggleExpanded
+     * - drag: смещение > 10px → двигаем окно
+     * - удержание без движения > 500мс → игнорируем (не раскрываем)
+     */
+    private fun attachHeaderGestures(view: View) {
+        var downTime = 0L
         var initialY = 0
         var initialTouchY = 0f
         var moved = false
+        var handled = false
 
         view.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
+                    downTime = SystemClock.elapsedRealtime()
                     initialY = layoutParams?.y ?: 0
                     initialTouchY = event.rawY
                     moved = false
+                    handled = false
                     false
                 }
                 MotionEvent.ACTION_MOVE -> {
+                    if (handled) return@setOnTouchListener true
                     val dy = event.rawY - initialTouchY
-                    if (Math.abs(dy) > 10) moved = true
-                    if (moved) {
+                    if (Math.abs(dy) > 10) {
+                        moved = true
                         layoutParams?.y = initialY - dy.toInt()
                         try { windowManager?.updateViewLayout(rootView, layoutParams) } catch (_: Exception) {}
                     }
                     moved
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (handled) return@setOnTouchListener true
+                    val duration = SystemClock.elapsedRealtime() - downTime
+                    val isTap = !moved && duration < 300
+                    if (isTap) {
+                        toggleExpanded()
+                        handled = true
+                        true
+                    } else {
+                        false
+                    }
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    handled = true
+                    true
                 }
                 else -> false
             }
@@ -259,6 +291,10 @@ class OverlayService : Service() {
         rebuildContent()
     }
 
+    private fun applyDotColor() {
+        dotView?.setTextColor(if (isRunning) COLOR_DOT_ACTIVE else COLOR_DOT_IDLE)
+    }
+
     private fun rebuildContent() {
         val ctx = this
         val container = contentContainer ?: return
@@ -266,6 +302,7 @@ class OverlayService : Service() {
 
         container.visibility = if (expanded) View.VISIBLE else View.GONE
         arrowView?.text = if (expanded) "▼" else "▲"
+        applyDotColor()
 
         if (!expanded) return
 
