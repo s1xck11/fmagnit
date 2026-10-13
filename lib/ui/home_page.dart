@@ -726,3 +726,121 @@ class _WaypointDialogState extends State<_WaypointDialog> {
     final lat = double.tryParse(_latCtrl.text.trim());
     final lon = double.tryParse(_lonCtrl.text.trim());
     final acc = double.tryParse(_accCtrl.text.trim()) ?? 3.0;
+
+    if (name.isEmpty || lat == null || lon == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Проверь название и координаты')),
+      );
+      return;
+    }
+
+    final w = widget.initial != null
+        ? widget.initial!.copyWith(
+            name: name,
+            group: group,
+            latitude: lat,
+            longitude: lon,
+            accuracy: acc,
+          )
+        : Waypoint(
+            name: name,
+            group: group,
+            latitude: lat,
+            longitude: lon,
+            accuracy: acc,
+          );
+
+    Navigator.of(context).pop(w);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final title = widget.initial == null ? 'Новая точка' : 'Редактировать';
+    return AlertDialog(
+      title: Text(title),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (widget.infoLine != null) ...[
+              Text(
+                widget.infoLine!,
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: FMagnitTheme.textMuted,
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+            TextField(
+              controller: _nameCtrl,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'Название',
+                hintText: 'например, Магнит на Ленина 5',
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _groupCtrl,
+              decoration: InputDecoration(
+                labelText: 'Группа (необязательно)',
+                hintText: 'например, Смена 13.10',
+                suffixIcon: widget.groups.isEmpty
+                    ? null
+                    : PopupMenuButton<String>(
+                        icon: const Icon(Icons.arrow_drop_down),
+                        tooltip: 'Выбрать существующую',
+                        onSelected: (v) {
+                          _groupCtrl.text = v;
+                        },
+                        itemBuilder: (_) => widget.groups
+                            .map((g) => PopupMenuItem(
+                                  value: g,
+                                  child: Text(g),
+                                ))
+                            .toList(),
+                      ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _latCtrl,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+                signed: true,
+              ),
+              decoration: const InputDecoration(labelText: 'Latitude'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _lonCtrl,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+                signed: true,
+              ),
+              decoration: const InputDecoration(labelText: 'Longitude'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _accCtrl,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(labelText: 'Accuracy (m)'),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          onPressed: _save,
+          child: const Text('Сохранить'),
+        ),
+      ],
+    );
+  }
+}
