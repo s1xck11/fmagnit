@@ -1,16 +1,12 @@
 package com.s1xck.fmagnit
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
 
-/**
- * Определяет, активно ли целевое приложение.
- * Если НЕ смогли определить — оставляем СКРЫТО (false).
- * Показываем оверлей только при уверенности, что Магнит активен.
- */
 class MainAccessibilityService : AccessibilityService() {
 
     private val handler = Handler(Looper.getMainLooper())
@@ -24,6 +20,20 @@ class MainAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+
+        // Принудительно включаем нужные флаги — на случай, если XML не подхватился
+        try {
+            val info = serviceInfo ?: AccessibilityServiceInfo()
+            info.eventTypes = AccessibilityEvent.TYPES_ALL_MASK
+            info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
+            info.flags = info.flags or
+                    AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+                    AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
+            info.notificationTimeout = 100
+            serviceInfo = info
+        } catch (_: Exception) {
+        }
+
         startPolling()
         refreshTargetState()
     }
