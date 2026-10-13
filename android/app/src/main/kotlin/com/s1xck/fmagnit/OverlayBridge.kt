@@ -6,8 +6,9 @@ package com.s1xck.fmagnit
 object OverlayBridge {
     const val TARGET_PACKAGE = "com.magnit.delivery.courier"
 
+    // По умолчанию — СКРЫТО. Показываем только когда точно уверены.
     @Volatile
-    var isTargetAppForeground: Boolean = true
+    var isTargetAppForeground: Boolean = false
         private set
 
     @Volatile
