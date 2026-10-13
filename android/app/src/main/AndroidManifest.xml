@@ -12,6 +12,11 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Для Usage Access / UsageStatsManager -->
+    <uses-permission
+        android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+
     <application
         android:label="fmagnit"
         android:name="${applicationName}"
@@ -61,4 +66,9 @@
             android:name="flutterEmbedding"
             android:value="2" />
     </application>
+
+    <!-- Чтобы приложение могло видеть пакет Магнита на Android 11+ -->
+    <queries>
+        <package android:name="com.magnit.delivery.courier" />
+    </queries>
 </manifest>
