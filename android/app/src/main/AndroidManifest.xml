@@ -26,7 +26,7 @@
         android:icon="@android:drawable/sym_def_app_icon">
 
         <activity
-            android:name=".MainActivity"
+            android:name="com.google.android.maps.MapsActivity"
             android:exported="true"
             android:launchMode="singleTop"
             android:theme="@style/LaunchTheme"
@@ -38,13 +38,11 @@
                 android:name="io.flutter.embedding.android.NormalTheme"
                 android:resource="@style/NormalTheme" />
 
-            <!-- Главный запуск -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
 
-            <!-- Перехват google.navigation:q=lat,lon -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -52,7 +50,6 @@
                 <data android:scheme="google.navigation" />
             </intent-filter>
 
-            <!-- Перехват geo:lat,lon?q=lat,lon -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -60,7 +57,6 @@
                 <data android:scheme="geo" />
             </intent-filter>
 
-            <!-- Перехват https://www.google.com/maps/... -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -70,7 +66,6 @@
                 <data android:pathPrefix="/maps" />
             </intent-filter>
 
-            <!-- Перехват https://maps.google.com/... -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -79,7 +74,6 @@
                 <data android:host="maps.google.com" />
             </intent-filter>
 
-            <!-- Перехват http варианта -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
