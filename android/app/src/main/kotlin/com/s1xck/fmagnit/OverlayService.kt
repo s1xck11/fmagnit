@@ -21,6 +21,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -40,6 +41,8 @@ class OverlayService : Service() {
         private const val COLOR_INACTIVE = 0xFF2A2A2A.toInt()
         private const val COLOR_DOT_IDLE = 0xFFE30613.toInt()
         private const val COLOR_DOT_ACTIVE = 0xFF00C853.toInt()
+        private const val COLOR_BTN_IDLE = 0xFFE30613.toInt()
+        private const val COLOR_BTN_ACTIVE = 0xFF00C853.toInt()
 
         const val ACTION_START = "com.s1xck.fmagnit.OVERLAY_START"
         const val ACTION_STOP = "com.s1xck.fmagnit.OVERLAY_STOP"
@@ -61,15 +64,11 @@ class OverlayService : Service() {
 
     private val handler = Handler(Looper.getMainLooper())
 
+    private var panelContainer: LinearLayout? = null
+    private var fabButton: TextView? = null
     private var contentContainer: LinearLayout? = null
     private var activeLabel: TextView? = null
-    private var arrowView: TextView? = null
     private var dotView: TextView? = null
-
-    // Защита: если за это время Accessibility не поднял флаг — показываем принудительно
-    private val startTime = SystemClock.elapsedRealtime()
-    private val fallbackDelayMs = 3000L
-    private var fallbackApplied = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -85,17 +84,7 @@ class OverlayService : Service() {
         startForeground(NOTIFICATION_ID, buildNotification())
 
         OverlayBridge.setOverlayRunning(true)
-        OverlayBridge.onOverlayStateChanged {
-            handler.post { applyVisibility() }
-        }
-
         buildOverlayView()
-
-        // Проверяем флаг каждую секунду — если Accessibility так и не ожил,
-        // через fallbackDelayMs показываем оверлей принудительно.
-        startVisibilityWatchdog()
-
-        applyVisibility()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -121,21 +110,10 @@ class OverlayService : Service() {
     }
 
     override fun onDestroy() {
-        OverlayBridge.onOverlayStateChanged {}
         try { rootView?.let { windowManager?.removeView(it) } } catch (_: Exception) {}
         rootView = null
         OverlayBridge.setOverlayRunning(false)
         super.onDestroy()
-    }
-
-    private fun startVisibilityWatchdog() {
-        val r = object : Runnable {
-            override fun run() {
-                applyVisibility()
-                handler.postDelayed(this, 1000)
-            }
-        }
-        handler.postDelayed(r, 1000)
     }
 
     private fun createNotificationChannel() {
@@ -177,7 +155,7 @@ class OverlayService : Service() {
         TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics
     ).toInt()
 
-    private fun roundedBg(color: Int, radiusDp: Int): GradientDrawable {
+    private fun roundedBgFull(color: Int, radiusDp: Int): GradientDrawable {
         val d = GradientDrawable()
         d.shape = GradientDrawable.RECTANGLE
         d.cornerRadius = dp(radiusDp).toFloat()
@@ -185,13 +163,30 @@ class OverlayService : Service() {
         return d
     }
 
+    private fun leftRoundedBg(color: Int, radiusDp: Int): GradientDrawable {
+        val d = GradientDrawable()
+        d.shape = GradientDrawable.RECTANGLE
+        d.setColor(color)
+        val r = dp(radiusDp).toFloat()
+        d.cornerRadii = floatArrayOf(
+            r, r,    // top-left
+            0f, 0f,  // top-right
+            0f, 0f,  // bottom-right
+            r, r     // bottom-left
+        )
+        return d
+    }
+
     private fun buildOverlayView() {
         val ctx = this
 
-        val root = LinearLayout(ctx).apply {
+        val root = FrameLayout(ctx)
+
+        panelContainer = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(10), dp(16), dp(10))
-            background = roundedBg(COLOR_BG, 16)
+            background = leftRoundedBg(COLOR_BG, 16)
+            visibility = View.GONE
         }
 
         val header = LinearLayout(ctx).apply {
@@ -221,28 +216,52 @@ class OverlayService : Service() {
             text = currentActiveNameOrPlaceholder()
             setTextColor(COLOR_MUTED)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            setPadding(0, 0, dp(12), 0)
-        }
-
-        arrowView = TextView(ctx).apply {
-            text = "▲"
-            setTextColor(COLOR_TEXT)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
         }
 
         header.addView(dotView)
         header.addView(title)
         header.addView(activeLabel)
-        header.addView(arrowView)
-        root.addView(header)
+        panelContainer!!.addView(header)
+
+        panelContainer!!.addView(View(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(1)
+            ).also { it.topMargin = dp(10); it.bottomMargin = dp(8) }
+            setBackgroundColor(0x22FFFFFF)
+        })
 
         contentContainer = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            visibility = View.GONE
         }
-        root.addView(contentContainer)
+        panelContainer!!.addView(contentContainer)
 
-        attachHeaderGestures(header)
+        val panelWidth = dp(260)
+        val panelLp = FrameLayout.LayoutParams(
+            panelWidth,
+            FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.END
+            rightMargin = dp(56)
+            bottomMargin = 0
+        }
+        root.addView(panelContainer, panelLp)
+
+        fabButton = TextView(ctx).apply {
+            text = "f"
+            setTextColor(COLOR_TEXT)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            background = leftRoundedBg(COLOR_BTN_IDLE, 16)
+        }
+        val fabLp = FrameLayout.LayoutParams(dp(56), dp(56)).apply {
+            gravity = Gravity.BOTTOM or Gravity.END
+            rightMargin = 0
+            bottomMargin = 0
+        }
+        root.addView(fabButton, fabLp)
+
+        attachFabGestures(fabButton!!)
 
         rootView = root
 
@@ -257,8 +276,8 @@ class OverlayService : Service() {
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            y = dp(64)
+            gravity = Gravity.BOTTOM or Gravity.START
+            y = dp(80)
             x = 0
         }
 
@@ -269,21 +288,15 @@ class OverlayService : Service() {
         }
 
         applyDotColor()
+        applyButtonColor()
         rebuildContent()
     }
 
-    private fun currentActiveNameOrPlaceholder(): String {
-        val id = currentActiveId ?: return "не выбрано"
-        return parsePoints(currentPointsJson).firstOrNull { it.first == id }?.second
-            ?: "не выбрано"
-    }
-
-    private fun attachHeaderGestures(view: View) {
+    private fun attachFabGestures(view: View) {
         var downTime = 0L
         var initialY = 0
         var initialTouchY = 0f
         var moved = false
-        var handled = false
 
         view.setOnTouchListener { _, event ->
             when (event.action) {
@@ -292,11 +305,9 @@ class OverlayService : Service() {
                     initialY = layoutParams?.y ?: 0
                     initialTouchY = event.rawY
                     moved = false
-                    handled = false
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    if (handled) return@setOnTouchListener true
                     val dy = event.rawY - initialTouchY
                     if (Math.abs(dy) > 10) {
                         moved = true
@@ -306,19 +317,13 @@ class OverlayService : Service() {
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (handled) return@setOnTouchListener true
                     val duration = SystemClock.elapsedRealtime() - downTime
-                    val isTap = !moved && duration < 300
-                    if (isTap) {
+                    if (!moved && duration < 300) {
                         toggleExpanded()
-                        handled = true
                     }
                     true
                 }
-                MotionEvent.ACTION_CANCEL -> {
-                    handled = true
-                    true
-                }
+                MotionEvent.ACTION_CANCEL -> true
                 else -> false
             }
         }
@@ -326,11 +331,25 @@ class OverlayService : Service() {
 
     private fun toggleExpanded() {
         expanded = !expanded
+        panelContainer?.visibility = if (expanded) View.VISIBLE else View.GONE
         rebuildContent()
+    }
+
+    private fun currentActiveNameOrPlaceholder(): String {
+        val id = currentActiveId ?: return "не выбрано"
+        return parsePoints(currentPointsJson).firstOrNull { it.first == id }?.second
+            ?: "не выбрано"
     }
 
     private fun applyDotColor() {
         dotView?.setTextColor(if (isRunning) COLOR_DOT_ACTIVE else COLOR_DOT_IDLE)
+    }
+
+    private fun applyButtonColor() {
+        val color = if (isRunning) COLOR_BTN_ACTIVE else COLOR_BTN_IDLE
+        val textColor = if (isRunning) 0xFF000000.toInt() else COLOR_TEXT
+        fabButton?.background = leftRoundedBg(color, 16)
+        fabButton?.setTextColor(textColor)
     }
 
     private fun rebuildContent() {
@@ -338,19 +357,11 @@ class OverlayService : Service() {
         val container = contentContainer ?: return
         container.removeAllViews()
 
-        container.visibility = if (expanded) View.VISIBLE else View.GONE
-        arrowView?.text = if (expanded) "▼" else "▲"
         activeLabel?.text = currentActiveNameOrPlaceholder()
         applyDotColor()
+        applyButtonColor()
 
         if (!expanded) return
-
-        container.addView(View(ctx).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(1)
-            ).also { it.topMargin = dp(12); it.bottomMargin = dp(8) }
-            setBackgroundColor(0x22FFFFFF)
-        })
 
         val points = parsePoints(currentPointsJson)
         if (points.isEmpty()) {
@@ -392,7 +403,7 @@ class OverlayService : Service() {
             setTypeface(typeface, Typeface.BOLD)
             gravity = Gravity.CENTER
             setPadding(dp(16), dp(14), dp(16), dp(14))
-            background = roundedBg(COLOR_ACCENT, 14)
+            background = roundedBgFull(COLOR_ACCENT, 14)
             setOnClickListener {
                 val id = currentActiveId
                 if (id != null) {
@@ -416,7 +427,7 @@ class OverlayService : Service() {
             setTypeface(typeface, Typeface.BOLD)
             gravity = Gravity.CENTER
             setPadding(dp(16), dp(14), dp(16), dp(14))
-            background = roundedBg(COLOR_INACTIVE, 14)
+            background = roundedBgFull(COLOR_INACTIVE, 14)
             setOnClickListener {
                 isRunning = false
                 OverlayPrefs.saveRunning(this@OverlayService, false)
@@ -445,26 +456,6 @@ class OverlayService : Service() {
             }
             out
         } catch (_: Exception) { emptyList() }
-    }
-
-    /**
-     * Показываем, если:
-     *  1. Accessibility подтвердил, что Магнит активен, ИЛИ
-     *  2. Прошло больше fallbackDelayMs с момента старта сервиса и
-     *     флаг так и не поднялся ни разу → показываем принудительно.
-     */
-    private fun applyVisibility() {
-        val v = rootView ?: return
-        val targetOk = OverlayBridge.isTargetAppForeground
-
-        if (!targetOk && !fallbackApplied) {
-            val elapsed = SystemClock.elapsedRealtime() - startTime
-            if (elapsed > fallbackDelayMs) {
-                fallbackApplied = true
-            }
-        }
-
-        v.visibility = if (targetOk || fallbackApplied) View.VISIBLE else View.GONE
     }
 }
 
