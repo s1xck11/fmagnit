@@ -1,37 +1,48 @@
 package com.s1xck.fmagnit
 
 import android.accessibilityservice.AccessibilityService
+import android.os.Handler
+import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 
-/**
- * Слушает смену активного окна. Использует getWindows() для стабильного
- * определения переднего плана — реагирует на каждое событие, но проверяет
- * актуальный список окон, а не последнее событие. Это убивает мигание.
- */
 class MainAccessibilityService : AccessibilityService() {
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event == null) return
+    private val handler = Handler(Looper.getMainLooper())
+    private var pollRunnable: Runnable? = null
 
-        when (event.eventType) {
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
-            AccessibilityEvent.TYPE_WINDOWS_CHANGED,
-            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
-                refreshTargetState()
-            }
-        }
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        refreshTargetState()
     }
 
     override fun onInterrupt() {}
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        startPolling()
         refreshTargetState()
     }
 
     override fun onDestroy() {
+        stopPolling()
         OverlayBridge.setTargetForeground(false)
         super.onDestroy()
+    }
+
+    private fun startPolling() {
+        stopPolling()
+        val r = object : Runnable {
+            override fun run() {
+                refreshTargetState()
+                handler.postDelayed(this, 500)
+            }
+        }
+        pollRunnable = r
+        handler.postDelayed(r, 500)
+    }
+
+    private fun stopPolling() {
+        pollRunnable?.let { handler.removeCallbacks(it) }
+        pollRunnable = null
     }
 
     private fun refreshTargetState() {
@@ -51,19 +62,6 @@ class MainAccessibilityService : AccessibilityService() {
                 }
             }
         } catch (_: Exception) {
-        }
-
-        // Если getWindows() не дал результата — пробуем по последнему событию
-        if (!isTarget) {
-            try {
-                val recent = windows
-                if (recent == null || recent.isEmpty()) {
-                    // Оставляем предыдущее состояние — не мигаем
-                    return
-                }
-            } catch (_: Exception) {
-                return
-            }
         }
 
         OverlayBridge.setTargetForeground(isTarget)
