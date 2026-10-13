@@ -8,7 +8,6 @@ void main() {
 }
 
 class FMagnitTheme {
-  // Палитра в стиле Магнит.Доставка
   static const Color bg = Color(0xFF0D0D0D);
   static const Color card = Color(0xFF1A1A1A);
   static const Color surface = Color(0xFF1A1A1A);
@@ -30,14 +29,9 @@ class FMagnitTheme {
       onError: Colors.white,
       surface: surface,
       onSurface: textPrimary,
-      surfaceContainerHighest: card,
-      onSurfaceVariant: textMuted,
+      background: bg,
+      onBackground: textPrimary,
       outline: divider,
-      shadow: Colors.black,
-      inverseSurface: Colors.white,
-      onInverseSurface: Colors.black,
-      inversePrimary: accent,
-      scrim: Colors.black,
     );
 
     return ThemeData(
@@ -62,7 +56,7 @@ class FMagnitTheme {
         ),
         iconTheme: IconThemeData(color: textPrimary),
       ),
-      cardTheme: CardThemeData(
+      cardTheme: CardTheme(
         color: card,
         elevation: 0,
         margin: EdgeInsets.zero,
@@ -135,7 +129,7 @@ class FMagnitTheme {
           borderSide: const BorderSide(color: accent, width: 1.5),
         ),
       ),
-      dialogTheme: DialogThemeData(
+      dialogTheme: DialogTheme(
         backgroundColor: card,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(20),
