@@ -27,6 +27,7 @@ class _HomePageState extends State<HomePage> {
   bool _overlayRunning = false;
   bool _overlayPerm = false;
   bool _accessPerm = false;
+  bool _usagePerm = false;
   String? _activeId;
 
   Timer? _stateTimer;
@@ -82,11 +83,13 @@ class _HomePageState extends State<HomePage> {
     final running = await _overlay.isOverlayRunning();
     final ov = await _overlay.hasOverlayPermission();
     final ac = await _overlay.hasAccessibilityPermission();
+    final us = await _overlay.hasUsageAccess();
     if (!mounted) return;
     setState(() {
       _overlayRunning = running;
       _overlayPerm = ov;
       _accessPerm = ac;
+      _usagePerm = us;
     });
   }
 
@@ -103,8 +106,8 @@ class _HomePageState extends State<HomePage> {
       await _overlay.requestOverlayPermission();
       return;
     }
-    if (!_accessPerm) {
-      await _overlay.openAccessibilitySettings();
+    if (!_usagePerm) {
+      await _overlay.openUsageAccessSettings();
       return;
     }
     if (_overlayRunning) {
@@ -191,8 +194,30 @@ class _HomePageState extends State<HomePage> {
                             runSpacing: 8,
                             children: [
                               _statusChip('Overlay', _overlayPerm),
+                              _statusChip('Usage Access', _usagePerm),
                               _statusChip('Accessibility', _accessPerm),
                               _statusChip('Сервис', _overlayRunning),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              OutlinedButton.icon(
+                                onPressed: () async {
+                                  await _overlay.openUsageAccessSettings();
+                                },
+                                icon: const Icon(Icons.insights),
+                                label: const Text('Usage Access'),
+                              ),
+                              OutlinedButton.icon(
+                                onPressed: () async {
+                                  await _overlay.openAccessibilitySettings();
+                                },
+                                icon: const Icon(Icons.accessibility),
+                                label: const Text('Accessibility'),
+                              ),
                             ],
                           ),
                           const SizedBox(height: 12),
@@ -336,45 +361,4 @@ class _WaypointDialogState extends State<_WaypointDialog> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TextField(
-              controller: _nameCtrl,
-              decoration: const InputDecoration(labelText: 'Название'),
-            ),
-            TextField(
-              controller: _latCtrl,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-                signed: true,
-              ),
-              decoration: const InputDecoration(labelText: 'Latitude'),
-            ),
-            TextField(
-              controller: _lonCtrl,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-                signed: true,
-              ),
-              decoration: const InputDecoration(labelText: 'Longitude'),
-            ),
-            TextField(
-              controller: _accCtrl,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(labelText: 'Accuracy (m)'),
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Отмена'),
-        ),
-        FilledButton(
-          onPressed: _save,
-          child: const Text('Сохранить'),
-        ),
-      ],
-    );
-  }
-}
+            TextField
