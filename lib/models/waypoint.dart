@@ -3,6 +3,7 @@ import 'package:uuid/uuid.dart';
 class Waypoint {
   final String id;
   String name;
+  String group;
   double latitude;
   double longitude;
   double altitude;
@@ -12,6 +13,7 @@ class Waypoint {
   Waypoint({
     String? id,
     required this.name,
+    this.group = '',
     required this.latitude,
     required this.longitude,
     this.altitude = 0.0,
@@ -22,6 +24,7 @@ class Waypoint {
 
   Waypoint copyWith({
     String? name,
+    String? group,
     double? latitude,
     double? longitude,
     double? altitude,
@@ -30,6 +33,7 @@ class Waypoint {
     return Waypoint(
       id: id,
       name: name ?? this.name,
+      group: group ?? this.group,
       latitude: latitude ?? this.latitude,
       longitude: longitude ?? this.longitude,
       altitude: altitude ?? this.altitude,
@@ -41,6 +45,7 @@ class Waypoint {
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,
+        'group': group,
         'latitude': latitude,
         'longitude': longitude,
         'altitude': altitude,
@@ -52,6 +57,7 @@ class Waypoint {
     return Waypoint(
       id: json['id'] as String,
       name: json['name'] as String,
+      group: (json['group'] as String?) ?? '',
       latitude: (json['latitude'] as num).toDouble(),
       longitude: (json['longitude'] as num).toDouble(),
       altitude: (json['altitude'] as num?)?.toDouble() ?? 0.0,
@@ -64,5 +70,5 @@ class Waypoint {
 
   @override
   String toString() =>
-      'Waypoint($name @ $latitude, $longitude, acc=$accuracy)';
+      'Waypoint($name @ $latitude, $longitude, group=$group, acc=$accuracy)';
 }
