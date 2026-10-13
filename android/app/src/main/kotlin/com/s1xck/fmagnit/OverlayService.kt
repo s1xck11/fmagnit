@@ -32,7 +32,6 @@ class OverlayService : Service() {
         const val NOTIFICATION_ID = 4201
         const val CHANNEL_ID = "fmagnit_overlay"
 
-        // Стиль под тёмный интерфейс Магнит.Доставка
         private const val COLOR_BG = 0xEE0A0A0A.toInt()
         private const val COLOR_ACCENT = 0xFFE30613.toInt()
         private const val COLOR_TEXT = 0xFFFFFFFF.toInt()
@@ -150,7 +149,6 @@ class OverlayService : Service() {
             background = roundedBg(COLOR_BG, 16)
         }
 
-        // Шапка — фиксированной высоты ≈56dp, как навбар
         val header = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -216,7 +214,7 @@ class OverlayService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            y = 0
+            y = dp(64)
             x = 0
         }
 
@@ -271,7 +269,6 @@ class OverlayService : Service() {
 
         if (!expanded) return
 
-        // Разделитель
         container.addView(View(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(1)
@@ -279,7 +276,6 @@ class OverlayService : Service() {
             setBackgroundColor(0x22FFFFFF)
         })
 
-        // Список точек
         val points = parsePoints(currentPointsJson)
         if (points.isEmpty()) {
             container.addView(TextView(ctx).apply {
@@ -306,7 +302,6 @@ class OverlayService : Service() {
             }
         }
 
-        // Кнопки Старт/Стоп
         val buttonsRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
