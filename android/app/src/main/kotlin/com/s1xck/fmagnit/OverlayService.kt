@@ -32,7 +32,6 @@ class OverlayService : Service() {
         const val NOTIFICATION_ID = 4201
         const val CHANNEL_ID = "fmagnit_overlay"
 
-        // Стиль — под тёмный интерфейс Магнит.Доставка
         private const val COLOR_BG = 0xEE0A0A0A.toInt()
         private const val COLOR_ACCENT = 0xFFE30613.toInt()
         private const val COLOR_TEXT = 0xFFFFFFFF.toInt()
@@ -46,11 +45,8 @@ class OverlayService : Service() {
         const val EXTRA_POINTS_JSON = "points_json"
         const val EXTRA_ACTIVE_ID = "active_id"
 
-        @Volatile
-        var currentPointsJson: String = "[]"
-
-        @Volatile
-        var currentActiveId: String? = null
+        @Volatile var currentPointsJson: String = "[]"
+        @Volatile var currentActiveId: String? = null
     }
 
     private var windowManager: WindowManager? = null
@@ -65,6 +61,7 @@ class OverlayService : Service() {
     private var contentContainer: LinearLayout? = null
     private var activeLabel: TextView? = null
     private var headerContainer: LinearLayout? = null
+    private var arrowView: TextView? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -80,6 +77,10 @@ class OverlayService : Service() {
         }
 
         buildOverlayView()
+
+        // Принудительно показать сразу — на случай если Accessibility уже видит Магнит
+        applyVisibility()
+        handler.postDelayed({ applyVisibility() }, 800)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -141,6 +142,8 @@ class OverlayService : Service() {
         TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics
     ).toInt()
 
+    private fun screenWidth(): Int = resources.displayMetrics.widthPixels
+
     private fun roundedBg(color: Int, radiusDp: Int): GradientDrawable {
         val d = GradientDrawable()
         d.shape = GradientDrawable.RECTANGLE
@@ -158,7 +161,6 @@ class OverlayService : Service() {
             background = roundedBg(COLOR_BG, 16)
         }
 
-        // Шапка — вся кликабельна для раскрытия
         val header = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -190,7 +192,7 @@ class OverlayService : Service() {
             setPadding(0, 0, dp(12), 0)
         }
 
-        val arrow = TextView(ctx).apply {
+        arrowView = TextView(ctx).apply {
             text = "▲"
             setTextColor(COLOR_TEXT)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
@@ -199,7 +201,7 @@ class OverlayService : Service() {
         header.addView(dot)
         header.addView(title)
         header.addView(activeLabel)
-        header.addView(arrow)
+        header.addView(arrowView)
         root.addView(header)
 
         contentContainer = LinearLayout(ctx).apply {
@@ -216,20 +218,23 @@ class OverlayService : Service() {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
 
+        val width = screenWidth() - dp(32)
+
         layoutParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
+            width,
             WindowManager.LayoutParams.WRAP_CONTENT,
             type,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                    or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            y = dp(76)
+            y = dp(80)
+            x = 0
         }
 
         try {
             windowManager?.addView(root, layoutParams)
+            Toast.makeText(this, "Оверлей создан", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
             Toast.makeText(this, "Ошибка оверлея: ${e.message}", Toast.LENGTH_LONG).show()
         }
@@ -276,11 +281,7 @@ class OverlayService : Service() {
         container.removeAllViews()
 
         container.visibility = if (expanded) View.VISIBLE else View.GONE
-
-        // Обновляем стрелку в шапке
-        if (headerContainer != null && headerContainer!!.childCount >= 4) {
-            (headerContainer!!.getChildAt(3) as TextView).text = if (expanded) "▼" else "▲"
-        }
+        arrowView?.text = if (expanded) "▼" else "▲"
 
         if (!expanded) return
 
