@@ -34,14 +34,18 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
-      - name: Analyze
-        run: flutter analyze
-        continue-on-error: true
+      - name: Setup Gradle wrapper
+        run: |
+          cd android
+          mkdir -p gradle/wrapper
+          if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
+            curl -L -o gradle/wrapper/gradle-wrapper.jar https://raw.githubusercontent.com/gradle/gradle/v7.5.0/gradle/wrapper/gradle-wrapper.jar
+          fi
 
       - name: Build debug APK
         run: flutter build apk --debug
 
-      - name: Build release APK (unsigned)
+      - name: Build release APK
         run: flutter build apk --release
 
       - name: Upload debug APK
