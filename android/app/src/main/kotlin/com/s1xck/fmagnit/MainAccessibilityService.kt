@@ -5,13 +5,11 @@ import android.accessibilityservice.AccessibilityServiceInfo
 import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
-import android.view.accessibility.AccessibilityWindowInfo
 
 /**
- * Основной детектор переднего плана.
- * 1. Пробует UsageStatsManager — работает на EMUI, MIUI и т.п.
- * 2. Если Usage Access не выдан — падает на Accessibility.getWindows().
- * 3. Если оба молчат — оставляем предыдущее состояние (не мигаем).
+ * Определяет активное приложение через UsageStatsManager.
+ * Работает на EMUI 12 (там Accessibility.getWindows() заблокирован).
+ * Поллинг раз в 1 сек. Если Usage Access не выдан — оставляем состояние как есть.
  */
 class MainAccessibilityService : AccessibilityService() {
 
@@ -19,7 +17,7 @@ class MainAccessibilityService : AccessibilityService() {
     private var pollRunnable: Runnable? = null
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        refreshTargetState()
+        // Больше не полагаемся на события — только на поллинг UsageStats.
     }
 
     override fun onInterrupt() {}
@@ -67,51 +65,12 @@ class MainAccessibilityService : AccessibilityService() {
     private fun refreshTargetState() {
         val target = OverlayBridge.TARGET_PACKAGE
 
-        // 1. UsageStats — основной путь
-        val usagePkg = ForegroundDetector.getForegroundPackage(this)
-        if (usagePkg != null) {
-            OverlayBridge.setTargetForeground(usagePkg == target)
+        // Если Usage Access не выдан — ничего не делаем, не мигаем.
+        if (!ForegroundDetector.hasUsageAccess(this)) {
             return
         }
 
-        // 2. Accessibility windows — резервный
-        if (checkWindows(target) || checkRootActive(target) || checkFocus(target)) {
-            OverlayBridge.setTargetForeground(true)
-            return
-        }
-
-        // 3. Не смогли определить — оставляем как было, не трогаем флаг.
-        //    (Никаких false — чтобы не мигало.)
-    }
-
-    private fun checkWindows(target: String): Boolean {
-        return try {
-            val windows: List<AccessibilityWindowInfo>? = windows
-            if (windows == null || windows.isEmpty()) return false
-            for (w in windows) {
-                val pkg = try { w.root?.packageName?.toString() } catch (_: Exception) { null }
-                if (pkg == target) return true
-            }
-            false
-        } catch (_: Exception) {
-            false
-        }
-    }
-
-    private fun checkRootActive(target: String): Boolean {
-        return try {
-            rootInActiveWindow?.packageName?.toString() == target
-        } catch (_: Exception) {
-            false
-        }
-    }
-
-    private fun checkFocus(target: String): Boolean {
-        return try {
-            findFocus(android.view.accessibility.AccessibilityNodeInfo.FOCUS_ACCESSIBILITY)
-                ?.packageName?.toString() == target
-        } catch (_: Exception) {
-            false
-        }
+        val pkg = ForegroundDetector.getForegroundPackage(this) ?: return
+        OverlayBridge.setTargetForeground(pkg == target)
     }
 }
