@@ -1,6 +1,10 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 import '../models/waypoint.dart';
+import '../services/mock_location_service.dart';
+import '../services/overlay_service.dart';
 import '../storage/waypoint_storage.dart';
 import 'mock_test_panel.dart';
 
@@ -13,13 +17,35 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   final _storage = WaypointStorage();
+  final _overlay = OverlayService();
+  final _mock = MockLocationService();
+
   List<Waypoint> _waypoints = [];
   bool _loading = true;
+
+  bool _overlayRunning = false;
+  bool _overlayPerm = false;
+  bool _accessPerm = false;
+  String? _activeId;
 
   @override
   void initState() {
     super.initState();
     _load();
+    _refreshPermissions();
+    _overlay.setStartHandler(_onOverlayStartRequested);
+  }
+
+  Future<void> _onOverlayStartRequested(String id) async {
+    final w = _waypoints.firstWhere(
+      (e) => e.id == id,
+      orElse: () => _waypoints.first,
+    );
+    await _mock.startMock(
+      latitude: w.latitude,
+      longitude: w.longitude,
+      accuracy: w.accuracy,
+    );
   }
 
   Future<void> _load() async {
@@ -28,6 +54,45 @@ class _HomePageState extends State<HomePage> {
       _waypoints = list;
       _loading = false;
     });
+    await _pushPointsToOverlay();
+  }
+
+  Future<void> _refreshPermissions() async {
+    final running = await _overlay.isOverlayRunning();
+    final ov = await _overlay.hasOverlayPermission();
+    final ac = await _overlay.hasAccessibilityPermission();
+    if (!mounted) return;
+    setState(() {
+      _overlayRunning = running;
+      _overlayPerm = ov;
+      _accessPerm = ac;
+    });
+  }
+
+  Future<void> _pushPointsToOverlay() async {
+    final json = jsonEncode(_waypoints.map((w) => {
+          'id': w.id,
+          'name': w.name,
+        }).toList());
+    await _overlay.updatePoints(pointsJson: json, activeId: _activeId);
+  }
+
+  Future<void> _toggleOverlay() async {
+    if (!_overlayPerm) {
+      await _overlay.requestOverlayPermission();
+      return;
+    }
+    if (!_accessPerm) {
+      await _overlay.openAccessibilitySettings();
+      return;
+    }
+    if (_overlayRunning) {
+      await _overlay.stopOverlay();
+    } else {
+      await _overlay.startOverlay();
+      await _pushPointsToOverlay();
+    }
+    await _refreshPermissions();
   }
 
   Future<void> _addWaypoint() async {
@@ -52,14 +117,29 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _deleteWaypoint(Waypoint w) async {
     await _storage.delete(w.id);
+    if (_activeId == w.id) _activeId = null;
     await _load();
+  }
+
+  Widget _statusChip(String label, bool ok) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: ok ? Colors.green.shade800 : Colors.red.shade800,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(color: Colors.white, fontSize: 12),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('fmagnit — точки'),
+        title: const Text('fmagnit'),
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: _addWaypoint,
@@ -67,39 +147,99 @@ class _HomePageState extends State<HomePage> {
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : _waypoints.isEmpty
-              ? const Center(
-                  child: Text('Пока нет точек. Добавь первую!'),
-                )
-              : ListView.separated(
-                  itemCount: _waypoints.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemBuilder: (context, i) {
-                    final w = _waypoints[i];
-                    return Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        ListTile(
-                          title: Text(w.name),
-                          subtitle: Text(
-                            '${w.latitude.toStringAsFixed(6)}, '
-                            '${w.longitude.toStringAsFixed(6)}',
+          : Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+                  child: Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Оверлей поверх Магнит.Доставка',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
-                          onTap: () => _editWaypoint(w),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.delete_outline),
-                            onPressed: () => _deleteWaypoint(w),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              _statusChip('Overlay', _overlayPerm),
+                              _statusChip('Accessibility', _accessPerm),
+                              _statusChip('Сервис', _overlayRunning),
+                            ],
                           ),
-                        ),
-                        MockTestPanel(
-                          label: w.name,
-                          latitude: w.latitude,
-                          longitude: w.longitude,
-                        ),
-                      ],
-                    );
-                  },
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: FilledButton.icon(
+                                  onPressed: _toggleOverlay,
+                                  icon: Icon(_overlayRunning
+                                      ? Icons.stop
+                                      : Icons.play_arrow),
+                                  label: Text(
+                                    _overlayRunning
+                                        ? 'Остановить оверлей'
+                                        : 'Запустить оверлей',
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              IconButton(
+                                onPressed: _refreshPermissions,
+                                icon: const Icon(Icons.refresh),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 ),
+                Expanded(
+                  child: _waypoints.isEmpty
+                      ? const Center(
+                          child: Text('Пока нет точек. Добавь первую!'),
+                        )
+                      : ListView.separated(
+                          itemCount: _waypoints.length,
+                          separatorBuilder: (_, __) =>
+                              const Divider(height: 1),
+                          itemBuilder: (context, i) {
+                            final w = _waypoints[i];
+                            return Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                ListTile(
+                                  title: Text(w.name),
+                                  subtitle: Text(
+                                    '${w.latitude.toStringAsFixed(6)}, '
+                                    '${w.longitude.toStringAsFixed(6)}',
+                                  ),
+                                  onTap: () => _editWaypoint(w),
+                                  trailing: IconButton(
+                                    icon: const Icon(Icons.delete_outline),
+                                    onPressed: () => _deleteWaypoint(w),
+                                  ),
+                                ),
+                                MockTestPanel(
+                                  label: w.name,
+                                  latitude: w.latitude,
+                                  longitude: w.longitude,
+                                ),
+                              ],
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
     );
   }
 }
@@ -123,15 +263,9 @@ class _WaypointDialogState extends State<_WaypointDialog> {
     super.initState();
     final w = widget.initial;
     _nameCtrl = TextEditingController(text: w?.name ?? '');
-    _latCtrl = TextEditingController(
-      text: w?.latitude.toString() ?? '',
-    );
-    _lonCtrl = TextEditingController(
-      text: w?.longitude.toString() ?? '',
-    );
-    _accCtrl = TextEditingController(
-      text: (w?.accuracy ?? 3.0).toString(),
-    );
+    _latCtrl = TextEditingController(text: w?.latitude.toString() ?? '');
+    _lonCtrl = TextEditingController(text: w?.longitude.toString() ?? '');
+    _accCtrl = TextEditingController(text: (w?.accuracy ?? 3.0).toString());
   }
 
   @override
@@ -203,7 +337,8 @@ class _WaypointDialogState extends State<_WaypointDialog> {
             ),
             TextField(
               controller: _accCtrl,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
               decoration: const InputDecoration(labelText: 'Accuracy (m)'),
             ),
           ],
