@@ -147,7 +147,6 @@ class MainActivity : FlutterActivity() {
             registerReceiver(pointBroadcastReceiver, filter)
         }
 
-        // Обрабатываем интент, которым нас запустили (geo:, google.navigation:)
         handleIncomingIntent(intent)
     }
 
@@ -157,26 +156,13 @@ class MainActivity : FlutterActivity() {
         handleIncomingIntent(intent)
     }
 
-    /**
-     * Парсит URI входящего интента и вытаскивает координаты.
-     * Форматы, которые поддерживаем:
-     *  - google.navigation:q=55.75,37.61
-     *  - geo:55.75,37.61?q=55.75,37.61
-     *  - https://www.google.com/maps/dir/?api=1&destination=55.75,37.61
-     *  - https://maps.google.com/?q=55.75,37.61
-     */
     private fun handleIncomingIntent(intent: Intent?) {
         val data: Uri = intent?.data ?: return
         val parsed = parseCoordinates(data) ?: return
         val (lat, lon) = parsed
 
-        OrderTargetStore.save(
-            context = applicationContext,
-            latitude = lat,
-            longitude = lon
-        )
+        OrderTargetStore.save(applicationContext, lat, lon)
 
-        // Если оверлей работает — сразу обновим панель
         if (OverlayBridge.isOverlayServiceRunning) {
             val svc = Intent(this, OverlayService::class.java).apply {
                 action = OverlayService.ACTION_ORDER_TARGET
@@ -186,8 +172,6 @@ class MainActivity : FlutterActivity() {
             startService(svc)
         }
 
-        // Сообщаем Dart-стороне, чтобы home_page тоже видел свежие координаты
-        // (у нас там нет прямого доступа к каналу тут, но можно через broadcast)
         sendBroadcast(Intent(ACTION_ORDER_TARGET_UPDATED).apply {
             setPackage(packageName)
             putExtra("lat", lat)
@@ -195,47 +179,34 @@ class MainActivity : FlutterActivity() {
         })
     }
 
-    /**
-     * Возвращает пару (lat, lon) или null, если не удалось распарсить.
-     */
     private fun parseCoordinates(uri: Uri): Pair<Double, Double>? {
-        // 1. google.navigation:q=55.75,37.61
         if (uri.scheme == "google.navigation") {
             val q = uri.getQueryParameter("q") ?: return null
             return parseLatLonString(q)
         }
 
-        // 2. geo:55.75,37.61?q=55.75,37.61
         if (uri.scheme == "geo") {
             val ssp = uri.schemeSpecificPart ?: return null
-            // ssp вида "55.75,37.61?q=..." или просто "55.75,37.61"
             val coordsPart = ssp.substringBefore("?")
             parseLatLonString(coordsPart)?.let { return it }
-            // fallback: пробуем q=
             val q = uri.getQueryParameter("q")
             if (q != null) return parseLatLonString(q)
             return null
         }
 
-        // 3. https://... (google.com/maps, maps.google.com)
         if (uri.scheme == "https" || uri.scheme == "http") {
-            // destination=lat,lon
             uri.getQueryParameter("destination")?.let {
                 parseLatLonString(it)?.let { r -> return r }
             }
-            // q=lat,lon
             uri.getQueryParameter("q")?.let {
                 parseLatLonString(it)?.let { r -> return r }
             }
-            // ll=lat,lon
             uri.getQueryParameter("ll")?.let {
                 parseLatLonString(it)?.let { r -> return r }
             }
-            // daddr=lat,lon
             uri.getQueryParameter("daddr")?.let {
                 parseLatLonString(it)?.let { r -> return r }
             }
-            // Иногда координаты лежат прямо в пути: /maps/@55.75,37.61,15z
             val path = uri.path ?: ""
             val atIdx = path.indexOf('@')
             if (atIdx >= 0) {
@@ -248,10 +219,6 @@ class MainActivity : FlutterActivity() {
         return null
     }
 
-    /**
-     * Парсит строку вида "55.751244,37.618423" или "55.751244, 37.618423".
-     * Возвращает null, если не получилось.
-     */
     private fun parseLatLonString(s: String): Pair<Double, Double>? {
         val cleaned = s.trim().replace(" ", "")
         val parts = cleaned.split(",")
@@ -276,8 +243,6 @@ class MainActivity : FlutterActivity() {
         stopPushLoop()
         super.onDestroy()
     }
-
-    // ---------- Разрешения ----------
 
     private fun isMockLocationEnabled(): Boolean {
         return try {
@@ -317,8 +282,6 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    // ---------- Реальная локация ----------
-
     private fun getBestRealLocation(): Location? {
         val lm = locationManager ?: return null
         var best: Location? = null
@@ -339,8 +302,6 @@ class MainActivity : FlutterActivity() {
         }
         return best
     }
-
-    // ---------- Mock ----------
 
     private fun ensureProvider(providerName: String) {
         val lm = locationManager ?: return
@@ -508,8 +469,6 @@ class MainActivity : FlutterActivity() {
             true
         } catch (_: Exception) { false }
     }
-
-    // ---------- Overlay ----------
 
     private fun requestOverlayPermission() {
         try {
