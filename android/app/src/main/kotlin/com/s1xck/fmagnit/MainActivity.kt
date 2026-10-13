@@ -265,41 +265,10 @@ class MainActivity : FlutterActivity() {
         } catch (_: Exception) {}
     }
 
-    /**
-     * Стартует оверлей. Если сервис уже запущен — не стартует повторно,
-     * а просто обновляет точки.
-     */
     private fun startOverlayService() {
         if (OverlayBridge.isOverlayServiceRunning) {
-            // Уже запущен — только обновляем точки
             updateOverlayPoints(OverlayService.currentPointsJson, OverlayService.currentActiveId)
             return
         }
-        val intent = Intent(this, OverlayService::class.java).apply {
-            action = OverlayService.ACTION_START
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(intent)
-        } else {
-            startService(intent)
-        }
-    }
-
-    private fun stopOverlayService() {
-        val intent = Intent(this, OverlayService::class.java).apply {
-            action = OverlayService.ACTION_STOP
-        }
-        startService(intent)
-    }
-
-    private fun updateOverlayPoints(json: String, activeId: String?) {
-        OverlayService.currentPointsJson = json
-        if (activeId != null) OverlayService.currentActiveId = activeId
-        val intent = Intent(this, OverlayService::class.java).apply {
-            action = OverlayService.ACTION_UPDATE_POINTS
-            putExtra(OverlayService.EXTRA_POINTS_JSON, json)
-            if (activeId != null) putExtra(OverlayService.EXTRA_ACTIVE_ID, activeId)
-        }
-        try { startService(intent) } catch (_: Exception) {}
-    }
-}
+        OverlayPrefs.saveServiceOn(this, true)
+        val intent = Intent(this, OverlayService::
