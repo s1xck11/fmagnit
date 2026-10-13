@@ -335,4 +335,593 @@ class _HomePageState extends State<HomePage> {
       map.putIfAbsent(g, () => []).add(w);
     }
     for (final entry in map.entries) {
-      entry
+      entry.value.sort(
+        (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+      );
+    }
+    final keys = map.keys.toList()
+      ..sort((a, b) {
+        if (a == 'Без группы') return 1;
+        if (b == 'Без группы') return -1;
+        return a.toLowerCase().compareTo(b.toLowerCase());
+      });
+    return keys.map((k) => MapEntry(k, map[k]!)).toList();
+  }
+
+  Widget _buildWaypointTile(Waypoint w) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+      child: Container(
+        decoration: BoxDecoration(
+          color: FMagnitTheme.card,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              title: Text(
+                w.name,
+                style: const TextStyle(
+                  color: FMagnitTheme.textPrimary,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 15,
+                ),
+              ),
+              subtitle: Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  '${w.latitude.toStringAsFixed(6)}, '
+                  '${w.longitude.toStringAsFixed(6)}'
+                  '${w.group.isNotEmpty ? '  •  ${w.group}' : ''}',
+                  style: const TextStyle(
+                    color: FMagnitTheme.textMuted,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              onTap: () => _editWaypoint(w),
+              trailing: IconButton(
+                icon: const Icon(Icons.delete_outline,
+                    color: FMagnitTheme.textMuted),
+                onPressed: () => _deleteWaypoint(w),
+              ),
+            ),
+            MockTestPanel(
+              label: w.name,
+              latitude: w.latitude,
+              longitude: w.longitude,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGroupedList() {
+    final groups = _grouped();
+    final children = <Widget>[];
+    for (final entry in groups) {
+      final name = entry.key;
+      final items = entry.value;
+      final collapsed = _collapsedGroups.contains(name);
+      children.add(
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () {
+              setState(() {
+                if (collapsed) {
+                  _collapsedGroups.remove(name);
+                } else {
+                  _collapsedGroups.add(name);
+                }
+              });
+            },
+            child: Padding(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+              child: Row(
+                children: [
+                  Icon(
+                    collapsed ? Icons.chevron_right : Icons.expand_more,
+                    size: 20,
+                    color: FMagnitTheme.accent,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '$name (${items.length})',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
+                        color: FMagnitTheme.textPrimary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      if (!collapsed) {
+        for (final w in items) {
+          children.add(_buildWaypointTile(w));
+        }
+      }
+    }
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 100),
+      children: children,
+    );
+  }
+
+  Widget _buildFlatList() {
+    final sorted = _sortedFlat(_waypoints);
+    return ListView.builder(
+      padding: const EdgeInsets.only(bottom: 100),
+      itemCount: sorted.length,
+      itemBuilder: (context, i) => _buildWaypointTile(sorted[i]),
+    );
+  }
+
+  Widget _statusChip(String label, bool ok) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: ok
+            ? FMagnitTheme.success.withOpacity(0.15)
+            : FMagnitTheme.accent.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: ok ? FMagnitTheme.success : FMagnitTheme.accent,
+          width: 1,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            ok ? Icons.check_circle : Icons.error_outline,
+            size: 14,
+            color: ok ? FMagnitTheme.success : FMagnitTheme.accent,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(
+              color: ok ? FMagnitTheme.success : FMagnitTheme.accent,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _healthBanner() {
+    if (_accessPerm || !_overlayPerm) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: _openHealth,
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: FMagnitTheme.accent.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: FMagnitTheme.accent),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.warning_amber_rounded,
+                  color: FMagnitTheme.accent),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'Accessibility выключен. Сервис может работать нестабильно. '
+                  'Нажми, чтобы узнать, как починить.',
+                  style: TextStyle(
+                    color: FMagnitTheme.textPrimary,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: FMagnitTheme.textMuted),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: FMagnitTheme.bg,
+      appBar: AppBar(
+        title: const Text('fmagnit'),
+        actions: [
+          IconButton(
+            onPressed: _openHealth,
+            icon: const Icon(Icons.health_and_safety),
+            tooltip: 'Здоровье сервисов',
+          ),
+          IconButton(
+            onPressed: _chooseSort,
+            icon: Icon(_sortMode.icon),
+            tooltip: 'Сортировка: ${_sortMode.label}',
+          ),
+          IconButton(
+            onPressed: _searchByAddress,
+            icon: const Icon(Icons.search),
+            tooltip: 'Поиск адреса',
+          ),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            tooltip: 'Ещё',
+            onSelected: (v) {
+              switch (v) {
+                case 'restore_gps':
+                  _restoreGps();
+                  break;
+                case 'import':
+                  _importPoints();
+                  break;
+                case 'export':
+                  _exportPoints();
+                  break;
+              }
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(
+                value: 'restore_gps',
+                child: Row(
+                  children: [
+                    Icon(Icons.gps_fixed, size: 20),
+                    SizedBox(width: 12),
+                    Text('Восстановить GPS'),
+                  ],
+                ),
+              ),
+              PopupMenuDivider(),
+              PopupMenuItem(
+                value: 'import',
+                child: Row(
+                  children: [
+                    Icon(Icons.file_download_outlined, size: 20),
+                    SizedBox(width: 12),
+                    Text('Импорт'),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'export',
+                child: Row(
+                  children: [
+                    Icon(Icons.file_upload_outlined, size: 20),
+                    SizedBox(width: 12),
+                    Text('Экспорт'),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+      body: _loading
+          ? const Center(
+              child: CircularProgressIndicator(color: FMagnitTheme.accent),
+            )
+          : Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: FMagnitTheme.card,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Оверлей поверх Магнит.Доставка',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                            color: FMagnitTheme.textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            _statusChip('Overlay', _overlayPerm),
+                            _statusChip('Usage Access', _usagePerm),
+                            _statusChip('Accessibility', _accessPerm),
+                            _statusChip('Сервис', _overlayRunning),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            OutlinedButton.icon(
+                              onPressed: () async {
+                                await _overlay.openUsageAccessSettings();
+                              },
+                              icon: const Icon(Icons.insights, size: 18),
+                              label: const Text('Usage Access'),
+                            ),
+                            OutlinedButton.icon(
+                              onPressed: () async {
+                                await _overlay.openAccessibilitySettings();
+                              },
+                              icon: const Icon(Icons.accessibility, size: 18),
+                              label: const Text('Accessibility'),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: FilledButton.icon(
+                                onPressed: _toggleOverlay,
+                                icon: Icon(
+                                  _overlayRunning
+                                      ? Icons.stop
+                                      : Icons.play_arrow,
+                                  size: 20,
+                                ),
+                                label: Text(
+                                  _overlayRunning
+                                      ? 'Остановить оверлей'
+                                      : 'Запустить оверлей',
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            IconButton(
+                              onPressed: _refreshPermissions,
+                              icon: const Icon(Icons.refresh,
+                                  color: FMagnitTheme.textPrimary),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                _healthBanner(),
+                Expanded(
+                  child: _waypoints.isEmpty
+                      ? const Center(
+                          child: Text(
+                            'Пока нет точек.\nДобавь первую!',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: FMagnitTheme.textMuted,
+                              fontSize: 15,
+                            ),
+                          ),
+                        )
+                      : (_sortMode == SortMode.byGroup
+                          ? _buildGroupedList()
+                          : _buildFlatList()),
+                ),
+              ],
+            ),
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          FloatingActionButton.small(
+            heroTag: 'add_current',
+            onPressed: _addCurrentLocation,
+            tooltip: 'Сохранить текущее местоположение',
+            child: const Icon(Icons.my_location),
+          ),
+          const SizedBox(height: 12),
+          FloatingActionButton(
+            heroTag: 'add_manual',
+            onPressed: _addWaypoint,
+            tooltip: 'Добавить точку вручную',
+            child: const Icon(Icons.add),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _WaypointDialog extends StatefulWidget {
+  final Waypoint? initial;
+  final double? presetLat;
+  final double? presetLon;
+  final double? presetAcc;
+  final String? infoLine;
+  final List<String> groups;
+
+  const _WaypointDialog({
+    this.initial,
+    this.presetLat,
+    this.presetLon,
+    this.presetAcc,
+    this.infoLine,
+    this.groups = const [],
+  });
+
+  @override
+  State<_WaypointDialog> createState() => _WaypointDialogState();
+}
+
+class _WaypointDialogState extends State<_WaypointDialog> {
+  late final TextEditingController _nameCtrl;
+  late final TextEditingController _groupCtrl;
+  late final TextEditingController _latCtrl;
+  late final TextEditingController _lonCtrl;
+  late final TextEditingController _accCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    final w = widget.initial;
+    _nameCtrl = TextEditingController(text: w?.name ?? '');
+    _groupCtrl = TextEditingController(text: w?.group ?? '');
+    _latCtrl = TextEditingController(
+      text: (w?.latitude ?? widget.presetLat)?.toString() ?? '',
+    );
+    _lonCtrl = TextEditingController(
+      text: (w?.longitude ?? widget.presetLon)?.toString() ?? '',
+    );
+    _accCtrl = TextEditingController(
+      text: (w?.accuracy ?? widget.presetAcc ?? 3.0).toString(),
+    );
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _groupCtrl.dispose();
+    _latCtrl.dispose();
+    _lonCtrl.dispose();
+    _accCtrl.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final name = _nameCtrl.text.trim();
+    final group = _groupCtrl.text.trim();
+    final lat = double.tryParse(_latCtrl.text.trim());
+    final lon = double.tryParse(_lonCtrl.text.trim());
+    final acc = double.tryParse(_accCtrl.text.trim()) ?? 3.0;
+
+    if (name.isEmpty || lat == null || lon == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Проверь название и координаты')),
+      );
+      return;
+    }
+
+    final w = widget.initial != null
+        ? widget.initial!.copyWith(
+            name: name,
+            group: group,
+            latitude: lat,
+            longitude: lon,
+            accuracy: acc,
+          )
+        : Waypoint(
+            name: name,
+            group: group,
+            latitude: lat,
+            longitude: lon,
+            accuracy: acc,
+          );
+
+    Navigator.of(context).pop(w);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final title = widget.initial == null ? 'Новая точка' : 'Редактировать';
+    return AlertDialog(
+      title: Text(title),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (widget.infoLine != null) ...[
+              Text(
+                widget.infoLine!,
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: FMagnitTheme.textMuted,
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+            TextField(
+              controller: _nameCtrl,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'Название',
+                hintText: 'например, Магнит на Ленина 5',
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _groupCtrl,
+              decoration: InputDecoration(
+                labelText: 'Группа (необязательно)',
+                hintText: 'например, Смена 13.10',
+                suffixIcon: widget.groups.isEmpty
+                    ? null
+                    : PopupMenuButton<String>(
+                        icon: const Icon(Icons.arrow_drop_down),
+                        tooltip: 'Выбрать существующую',
+                        onSelected: (v) {
+                          _groupCtrl.text = v;
+                        },
+                        itemBuilder: (_) => widget.groups
+                            .map((g) => PopupMenuItem(
+                                  value: g,
+                                  child: Text(g),
+                                ))
+                            .toList(),
+                      ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _latCtrl,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+                signed: true,
+              ),
+              decoration: const InputDecoration(labelText: 'Latitude'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _lonCtrl,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+                signed: true,
+              ),
+              decoration: const InputDecoration(labelText: 'Longitude'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _accCtrl,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(labelText: 'Accuracy (m)'),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          onPressed: _save,
+          child: const Text('Сохранить'),
+        ),
+      ],
+    );
+  }
+}
