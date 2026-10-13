@@ -10,6 +10,7 @@ import '../storage/waypoint_storage.dart';
 import 'address_search_dialog.dart';
 import 'import_export_dialogs.dart';
 import 'mock_test_panel.dart';
+import 'sort_menu.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -31,6 +32,11 @@ class _HomePageState extends State<HomePage> {
   bool _accessPerm = false;
   bool _usagePerm = false;
   String? _activeId;
+
+  SortMode _sortMode = SortMode.byDate;
+
+  // Свёрнутые группы (для режима byGroup)
+  final Set<String> _collapsedGroups = {};
 
   Timer? _stateTimer;
 
@@ -124,9 +130,15 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _addWaypoint() async {
+    final existingGroups = _waypoints
+        .map((w) => w.group)
+        .where((g) => g.isNotEmpty)
+        .toSet()
+        .toList();
+
     final result = await showDialog<Waypoint>(
       context: context,
-      builder: (_) => const _WaypointDialog(),
+      builder: (_) => _WaypointDialog(groups: existingGroups),
     );
     if (result == null) return;
     await _storage.upsert(result);
@@ -172,9 +184,16 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
+    final existingGroups = _waypoints
+        .map((w) => w.group)
+        .where((g) => g.isNotEmpty)
+        .toSet()
+        .toList();
+
     final result = await showDialog<Waypoint>(
       context: context,
       builder: (_) => _WaypointDialog(
+        groups: existingGroups,
         presetLat: real.latitude,
         presetLon: real.longitude,
         presetAcc: real.accuracy,
@@ -187,15 +206,23 @@ class _HomePageState extends State<HomePage> {
     await _load();
   }
 
-  /// Пункт 3: поиск адреса через Nominatim.
   Future<void> _searchByAddress() async {
     final result = await showAddressSearchDialog(context);
     if (result == null) return;
-    // Открываем диалог редактирования, чтобы можно было переименовать
     if (!mounted) return;
+
+    final existingGroups = _waypoints
+        .map((w) => w.group)
+        .where((g) => g.isNotEmpty)
+        .toSet()
+        .toList();
+
     final edited = await showDialog<Waypoint>(
       context: context,
-      builder: (_) => _WaypointDialog(initial: result),
+      builder: (_) => _WaypointDialog(
+        initial: result,
+        groups: existingGroups,
+      ),
     );
     if (edited == null) return;
     await _storage.upsert(edited);
@@ -210,9 +237,15 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _editWaypoint(Waypoint w) async {
+    final existingGroups = _waypoints
+        .map((e) => e.group)
+        .where((g) => g.isNotEmpty)
+        .toSet()
+        .toList();
+
     final result = await showDialog<Waypoint>(
       context: context,
-      builder: (_) => _WaypointDialog(initial: w),
+      builder: (_) => _WaypointDialog(initial: w, groups: existingGroups),
     );
     if (result == null) return;
     await _storage.upsert(result);
@@ -242,6 +275,137 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  Future<void> _chooseSort() async {
+    final chosen = await showSortMenu(context, _sortMode);
+    if (chosen == null || chosen == _sortMode) return;
+    setState(() => _sortMode = chosen);
+  }
+
+  // ----- Сортировка и группировка -----
+
+  List<Waypoint> _sortedFlat(List<Waypoint> src) {
+    final list = [...src];
+    switch (_sortMode) {
+      case SortMode.byDate:
+        list.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+        break;
+      case SortMode.byName:
+        list.sort((a, b) =>
+            a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        break;
+      case SortMode.byGroup:
+        list.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        break;
+    }
+    return list;
+  }
+
+  /// Возвращает список групп: [ (имяГруппы, [точки]) ].
+  /// Пустая группа — последняя.
+  List<MapEntry<String, List<Waypoint>>> _grouped() {
+    final map = <String, List<Waypoint>>{};
+    for (final w in _waypoints) {
+      final g = w.group.isEmpty ? 'Без группы' : w.group;
+      map.putIfAbsent(g, () => []).add(w);
+    }
+    for (final entry in map.entries) {
+      entry.value.sort(
+        (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+      );
+    }
+    final keys = map.keys.toList()
+      ..sort((a, b) {
+        if (a == 'Без группы') return 1;
+        if (b == 'Без группы') return -1;
+        return a.toLowerCase().compareTo(b.toLowerCase());
+      });
+    return keys.map((k) => MapEntry(k, map[k]!)).toList();
+  }
+
+  Widget _buildWaypointTile(Waypoint w) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ListTile(
+          title: Text(w.name),
+          subtitle: Text(
+            '${w.latitude.toStringAsFixed(6)}, '
+            '${w.longitude.toStringAsFixed(6)}'
+            '${w.group.isNotEmpty ? '  •  ${w.group}' : ''}',
+          ),
+          onTap: () => _editWaypoint(w),
+          trailing: IconButton(
+            icon: const Icon(Icons.delete_outline),
+            onPressed: () => _deleteWaypoint(w),
+          ),
+        ),
+        MockTestPanel(
+          label: w.name,
+          latitude: w.latitude,
+          longitude: w.longitude,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildGroupedList() {
+    final groups = _grouped();
+    final children = <Widget>[];
+    for (final entry in groups) {
+      final name = entry.key;
+      final items = entry.value;
+      final collapsed = _collapsedGroups.contains(name);
+      children.add(
+        InkWell(
+          onTap: () {
+            setState(() {
+              if (collapsed) {
+                _collapsedGroups.remove(name);
+              } else {
+                _collapsedGroups.add(name);
+              }
+            });
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            color: Colors.grey.shade200,
+            child: Row(
+              children: [
+                Icon(
+                  collapsed ? Icons.chevron_right : Icons.expand_more,
+                  size: 20,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    '$name (${items.length})',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      if (!collapsed) {
+        for (final w in items) {
+          children.add(_buildWaypointTile(w));
+          children.add(const Divider(height: 1));
+        }
+      }
+    }
+    return ListView(children: children);
+  }
+
+  Widget _buildFlatList() {
+    final sorted = _sortedFlat(_waypoints);
+    return ListView.separated(
+      itemCount: sorted.length,
+      separatorBuilder: (_, __) => const Divider(height: 1),
+      itemBuilder: (context, i) => _buildWaypointTile(sorted[i]),
+    );
+  }
+
   Widget _statusChip(String label, bool ok) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -262,6 +426,11 @@ class _HomePageState extends State<HomePage> {
       appBar: AppBar(
         title: const Text('fmagnit'),
         actions: [
+          IconButton(
+            onPressed: _chooseSort,
+            icon: Icon(_sortMode.icon),
+            tooltip: 'Сортировка: ${_sortMode.label}',
+          ),
           IconButton(
             onPressed: _searchByAddress,
             icon: const Icon(Icons.search),
@@ -382,36 +551,9 @@ class _HomePageState extends State<HomePage> {
                       ? const Center(
                           child: Text('Пока нет точек. Добавь первую!'),
                         )
-                      : ListView.separated(
-                          itemCount: _waypoints.length,
-                          separatorBuilder: (_, __) =>
-                              const Divider(height: 1),
-                          itemBuilder: (context, i) {
-                            final w = _waypoints[i];
-                            return Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                ListTile(
-                                  title: Text(w.name),
-                                  subtitle: Text(
-                                    '${w.latitude.toStringAsFixed(6)}, '
-                                    '${w.longitude.toStringAsFixed(6)}',
-                                  ),
-                                  onTap: () => _editWaypoint(w),
-                                  trailing: IconButton(
-                                    icon: const Icon(Icons.delete_outline),
-                                    onPressed: () => _deleteWaypoint(w),
-                                  ),
-                                ),
-                                MockTestPanel(
-                                  label: w.name,
-                                  latitude: w.latitude,
-                                  longitude: w.longitude,
-                                ),
-                              ],
-                            );
-                          },
-                        ),
+                      : (_sortMode == SortMode.byGroup
+                          ? _buildGroupedList()
+                          : _buildFlatList()),
                 ),
               ],
             ),
@@ -425,6 +567,7 @@ class _WaypointDialog extends StatefulWidget {
   final double? presetLon;
   final double? presetAcc;
   final String? infoLine;
+  final List<String> groups;
 
   const _WaypointDialog({
     this.initial,
@@ -432,6 +575,7 @@ class _WaypointDialog extends StatefulWidget {
     this.presetLon,
     this.presetAcc,
     this.infoLine,
+    this.groups = const [],
   });
 
   @override
@@ -440,6 +584,7 @@ class _WaypointDialog extends StatefulWidget {
 
 class _WaypointDialogState extends State<_WaypointDialog> {
   late final TextEditingController _nameCtrl;
+  late final TextEditingController _groupCtrl;
   late final TextEditingController _latCtrl;
   late final TextEditingController _lonCtrl;
   late final TextEditingController _accCtrl;
@@ -449,6 +594,7 @@ class _WaypointDialogState extends State<_WaypointDialog> {
     super.initState();
     final w = widget.initial;
     _nameCtrl = TextEditingController(text: w?.name ?? '');
+    _groupCtrl = TextEditingController(text: w?.group ?? '');
     _latCtrl = TextEditingController(
       text: (w?.latitude ?? widget.presetLat)?.toString() ?? '',
     );
@@ -463,6 +609,7 @@ class _WaypointDialogState extends State<_WaypointDialog> {
   @override
   void dispose() {
     _nameCtrl.dispose();
+    _groupCtrl.dispose();
     _latCtrl.dispose();
     _lonCtrl.dispose();
     _accCtrl.dispose();
@@ -471,6 +618,7 @@ class _WaypointDialogState extends State<_WaypointDialog> {
 
   void _save() {
     final name = _nameCtrl.text.trim();
+    final group = _groupCtrl.text.trim();
     final lat = double.tryParse(_latCtrl.text.trim());
     final lon = double.tryParse(_lonCtrl.text.trim());
     final acc = double.tryParse(_accCtrl.text.trim()) ?? 3.0;
@@ -485,12 +633,14 @@ class _WaypointDialogState extends State<_WaypointDialog> {
     final w = widget.initial != null
         ? widget.initial!.copyWith(
             name: name,
+            group: group,
             latitude: lat,
             longitude: lon,
             accuracy: acc,
           )
         : Waypoint(
             name: name,
+            group: group,
             latitude: lat,
             longitude: lon,
             accuracy: acc,
@@ -526,6 +676,30 @@ class _WaypointDialogState extends State<_WaypointDialog> {
                 hintText: 'например, Магнит на Ленина 5',
               ),
             ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _groupCtrl,
+              decoration: InputDecoration(
+                labelText: 'Группа (необязательно)',
+                hintText: 'например, Смена 13.10',
+                suffixIcon: widget.groups.isEmpty
+                    ? null
+                    : PopupMenuButton<String>(
+                        icon: const Icon(Icons.arrow_drop_down),
+                        tooltip: 'Выбрать существующую',
+                        onSelected: (v) {
+                          _groupCtrl.text = v;
+                        },
+                        itemBuilder: (_) => widget.groups
+                            .map((g) => PopupMenuItem(
+                                  value: g,
+                                  child: Text(g),
+                                ))
+                            .toList(),
+                      ),
+              ),
+            ),
+            const SizedBox(height: 8),
             TextField(
               controller: _latCtrl,
               keyboardType: const TextInputType.numberWithOptions(
