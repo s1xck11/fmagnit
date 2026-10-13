@@ -284,8 +284,6 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // ----- Сортировка и группировка -----
-
   List<Waypoint> _sortedFlat(List<Waypoint> src) {
     final list = [...src];
     switch (_sortMode) {
@@ -451,8 +449,8 @@ class _HomePageState extends State<HomePage> {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
         color: ok
-            ? FMagnitTheme.success.withValues(alpha: 0.15)
-            : FMagnitTheme.accent.withValues(alpha: 0.15),
+            ? FMagnitTheme.success.withOpacity(0.15)
+            : FMagnitTheme.accent.withOpacity(0.15),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
           color: ok ? FMagnitTheme.success : FMagnitTheme.accent,
