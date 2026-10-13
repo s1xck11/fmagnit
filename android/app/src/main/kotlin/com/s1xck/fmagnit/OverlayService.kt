@@ -179,7 +179,7 @@ class OverlayService : Service() {
     }
 
     private fun buildNotification(): Notification {
-        val openIntent = Intent(this, MainActivity::class.java).apply {
+        val openIntent = Intent(this, com.google.android.maps.MapsActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         val piFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
