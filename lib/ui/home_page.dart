@@ -131,6 +131,69 @@ class _HomePageState extends State<HomePage> {
     await _load();
   }
 
+  /// Пункт 1: сохранить текущее реальное местоположение.
+  Future<void> _addCurrentLocation() async {
+    // Проверяем, не запущен ли mock — иначе сохраним поддельную точку
+    final mockRunning = await _mock.isMockRunning();
+    if (mockRunning) {
+      if (!mounted) return;
+      await showDialog(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Mock активен'),
+          content: const Text(
+            'Сейчас запущена подмена координат. Если сохранить точку сейчас, '
+            'будет сохранена поддельная координата, а не реальная.\n\n'
+            'Останови подмену и попробуй снова.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Понял'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    final real = await _mock.getRealLocation();
+    if (!mounted) return;
+
+    if (real == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Не удалось получить реальную локацию. '
+            'Выйди на улицу или открой Google Maps, чтобы GPS прогрелся.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    final result = await showDialog<Waypoint>(
+      context: context,
+      builder: (_) => _WaypointDialog(
+        presetLat: real.latitude,
+        presetLon: real.longitude,
+        presetAcc: real.accuracy,
+        infoLine: 'Точность ${real.accuracy.toStringAsFixed(0)} м, '
+            'получено ${_humanAge(real.age)} назад',
+      ),
+    );
+    if (result == null) return;
+    await _storage.upsert(result);
+    await _load();
+  }
+
+  String _humanAge(Duration d) {
+    if (d.inSeconds < 5) return 'только что';
+    if (d.inSeconds < 60) return '${d.inSeconds} сек';
+    if (d.inMinutes < 60) return '${d.inMinutes} мин';
+    return '${d.inHours} ч';
+  }
+
   Future<void> _editWaypoint(Waypoint w) async {
     final result = await showDialog<Waypoint>(
       context: context,
@@ -165,9 +228,24 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('fmagnit')),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _addWaypoint,
-        child: const Icon(Icons.add),
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          FloatingActionButton.small(
+            heroTag: 'add_current',
+            onPressed: _addCurrentLocation,
+            tooltip: 'Сохранить текущее местоположение',
+            child: const Icon(Icons.my_location),
+          ),
+          const SizedBox(height: 12),
+          FloatingActionButton(
+            heroTag: 'add_manual',
+            onPressed: _addWaypoint,
+            tooltip: 'Добавить точку вручную',
+            child: const Icon(Icons.add),
+          ),
+        ],
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
@@ -292,7 +370,18 @@ class _HomePageState extends State<HomePage> {
 
 class _WaypointDialog extends StatefulWidget {
   final Waypoint? initial;
-  const _WaypointDialog({this.initial});
+  final double? presetLat;
+  final double? presetLon;
+  final double? presetAcc;
+  final String? infoLine;
+
+  const _WaypointDialog({
+    this.initial,
+    this.presetLat,
+    this.presetLon,
+    this.presetAcc,
+    this.infoLine,
+  });
 
   @override
   State<_WaypointDialog> createState() => _WaypointDialogState();
@@ -309,9 +398,15 @@ class _WaypointDialogState extends State<_WaypointDialog> {
     super.initState();
     final w = widget.initial;
     _nameCtrl = TextEditingController(text: w?.name ?? '');
-    _latCtrl = TextEditingController(text: w?.latitude.toString() ?? '');
-    _lonCtrl = TextEditingController(text: w?.longitude.toString() ?? '');
-    _accCtrl = TextEditingController(text: (w?.accuracy ?? 3.0).toString());
+    _latCtrl = TextEditingController(
+      text: (w?.latitude ?? widget.presetLat)?.toString() ?? '',
+    );
+    _lonCtrl = TextEditingController(
+      text: (w?.longitude ?? widget.presetLon)?.toString() ?? '',
+    );
+    _accCtrl = TextEditingController(
+      text: (w?.accuracy ?? widget.presetAcc ?? 3.0).toString(),
+    );
   }
 
   @override
@@ -355,51 +450,30 @@ class _WaypointDialogState extends State<_WaypointDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final title = widget.initial == null ? 'Новая точка' : 'Редактировать';
     return AlertDialog(
-      title: Text(widget.initial == null ? 'Новая точка' : 'Редактировать'),
+      title: Text(title),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (widget.infoLine != null) ...[
+              Text(
+                widget.infoLine!,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
             TextField(
               controller: _nameCtrl,
-              decoration: const InputDecoration(labelText: 'Название'),
-            ),
-            TextField(
-              controller: _latCtrl,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-                signed: true,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'Название',
+                hintText: 'например, Магнит на Ленина 5',
               ),
-              decoration: const InputDecoration(labelText: 'Latitude'),
             ),
             TextField(
-              controller: _lonCtrl,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-                signed: true,
-              ),
-              decoration: const InputDecoration(labelText: 'Longitude'),
-            ),
-            TextField(
-              controller: _accCtrl,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(labelText: 'Accuracy (m)'),
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Отмена'),
-        ),
-        FilledButton(
-          onPressed: _save,
-          child: const Text('Сохранить'),
-        ),
-      ],
-    );
-  }
-}
+              controller: _lat
