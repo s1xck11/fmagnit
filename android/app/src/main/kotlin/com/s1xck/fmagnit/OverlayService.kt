@@ -14,6 +14,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import android.util.TypedValue
 import android.view.Gravity
@@ -66,10 +67,14 @@ class OverlayService : Service() {
     private var arrowView: TextView? = null
     private var dotView: TextView? = null
 
+    private var wakeLock: PowerManager.WakeLock? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
+
+        acquireWakeLock()
 
         currentPointsJson = OverlayPrefs.loadPoints(this)
         currentActiveId = OverlayPrefs.loadActiveId(this)
@@ -115,7 +120,29 @@ class OverlayService : Service() {
         try { rootView?.let { windowManager?.removeView(it) } } catch (_: Exception) {}
         rootView = null
         OverlayBridge.setOverlayRunning(false)
+        releaseWakeLock()
         super.onDestroy()
+    }
+
+    private fun acquireWakeLock() {
+        try {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = pm.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "fmagnit::overlay_wakelock"
+            )
+            wakeLock?.setReferenceCounted(false)
+            wakeLock?.acquire()
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun releaseWakeLock() {
+        try {
+            if (wakeLock?.isHeld == true) wakeLock?.release()
+        } catch (_: Exception) {
+        }
+        wakeLock = null
     }
 
     private fun createNotificationChannel() {
@@ -252,15 +279,12 @@ class OverlayService : Service() {
         rebuildContent()
     }
 
-    /**
-     * Тап по шапке — раскрывает/сворачивает панель.
-     * Потянуть вверх/вниз — сдвигает окно.
-     */
     private fun attachHeaderGestures(view: View) {
         var downTime = 0L
         var initialY = 0
         var initialTouchY = 0f
         var moved = false
+        var handled = false
 
         view.setOnTouchListener { _, event ->
             when (event.action) {
@@ -269,9 +293,11 @@ class OverlayService : Service() {
                     initialY = layoutParams?.y ?: 0
                     initialTouchY = event.rawY
                     moved = false
+                    handled = false
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
+                    if (handled) return@setOnTouchListener true
                     val dy = event.rawY - initialTouchY
                     if (Math.abs(dy) > 10) {
                         moved = true
@@ -281,13 +307,19 @@ class OverlayService : Service() {
                     true
                 }
                 MotionEvent.ACTION_UP -> {
+                    if (handled) return@setOnTouchListener true
                     val duration = SystemClock.elapsedRealtime() - downTime
-                    if (!moved && duration < 300) {
+                    val isTap = !moved && duration < 300
+                    if (isTap) {
                         toggleExpanded()
+                        handled = true
                     }
                     true
                 }
-                MotionEvent.ACTION_CANCEL -> true
+                MotionEvent.ACTION_CANCEL -> {
+                    handled = true
+                    true
+                }
                 else -> false
             }
         }
