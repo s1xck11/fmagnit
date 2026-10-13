@@ -84,7 +84,12 @@ class OverlayService : Service() {
         startForeground(NOTIFICATION_ID, buildNotification())
 
         OverlayBridge.setOverlayRunning(true)
+        OverlayBridge.onOverlayStateChanged {
+            handler.post { applyVisibility() }
+        }
+
         buildOverlayView()
+        applyVisibility()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -110,6 +115,7 @@ class OverlayService : Service() {
     }
 
     override fun onDestroy() {
+        OverlayBridge.onOverlayStateChanged {}
         try { rootView?.let { windowManager?.removeView(it) } } catch (_: Exception) {}
         rootView = null
         OverlayBridge.setOverlayRunning(false)
@@ -290,6 +296,7 @@ class OverlayService : Service() {
         applyDotColor()
         applyButtonColor()
         rebuildContent()
+        applyVisibility()
     }
 
     private fun attachFabGestures(view: View) {
@@ -456,6 +463,20 @@ class OverlayService : Service() {
             }
             out
         } catch (_: Exception) { emptyList() }
+    }
+
+    /**
+     * Если Usage Access выдан — видимость управляется флагом.
+     * Если НЕ выдан — показываем всегда (fallback).
+     */
+    private fun applyVisibility() {
+        val v = rootView ?: return
+        val usageOk = ForegroundDetector.hasUsageAccess(this)
+        if (!usageOk) {
+            v.visibility = View.VISIBLE
+            return
+        }
+        v.visibility = if (OverlayBridge.isTargetAppForeground) View.VISIBLE else View.GONE
     }
 }
 
