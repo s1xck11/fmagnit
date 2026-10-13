@@ -41,7 +41,6 @@ class MainActivity : FlutterActivity() {
             applicationContext.getSystemService(Context.LOCATION_SERVICE) as LocationManager
         handler = Handler(Looper.getMainLooper())
 
-        // --- Канал mock location ---
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, mockChannelName)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -67,35 +66,16 @@ class MainActivity : FlutterActivity() {
                 }
             }
 
-        // --- Канал overlay ---
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, overlayChannelName)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
-                    "hasOverlayPermission" -> {
-                        result.success(Settings.canDrawOverlays(this))
-                    }
-                    "requestOverlayPermission" -> {
-                        requestOverlayPermission()
-                        result.success(null)
-                    }
-                    "hasAccessibilityPermission" -> {
-                        result.success(isAccessibilityServiceEnabled())
-                    }
-                    "openAccessibilitySettings" -> {
-                        openAccessibilitySettings()
-                        result.success(null)
-                    }
-                    "startOverlay" -> {
-                        startOverlayService()
-                        result.success(true)
-                    }
-                    "stopOverlay" -> {
-                        stopOverlayService()
-                        result.success(true)
-                    }
-                    "isOverlayRunning" -> {
-                        result.success(OverlayBridge.isOverlayServiceRunning)
-                    }
+                    "hasOverlayPermission" -> result.success(Settings.canDrawOverlays(this))
+                    "requestOverlayPermission" -> { requestOverlayPermission(); result.success(null) }
+                    "hasAccessibilityPermission" -> result.success(isAccessibilityServiceEnabled())
+                    "openAccessibilitySettings" -> { openAccessibilitySettings(); result.success(null) }
+                    "startOverlay" -> { startOverlayService(); result.success(true) }
+                    "stopOverlay" -> { stopOverlayService(); result.success(true) }
+                    "isOverlayRunning" -> result.success(OverlayBridge.isOverlayServiceRunning)
                     "updatePoints" -> {
                         val json = call.argument<String>("pointsJson") ?: "[]"
                         val activeId = call.argument<String>("activeId")
@@ -106,24 +86,17 @@ class MainActivity : FlutterActivity() {
                 }
             }
 
-        // --- Приём событий от OverlayService ---
         pointBroadcastReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 when (intent?.action) {
                     ACTION_POINT_START -> {
                         val id = intent.getStringExtra("id")
-                        // По id находим точку — но у нас тут нет списка.
-                        // Поэтому просто шлём событие в Dart через глобальный канал.
-                        flutterEngine.dartExecutor.binaryMessenger.let {
-                            MethodChannel(it, overlayChannelName)
-                                .invokeMethod("onOverlayStart", mapOf("id" to id))
-                        }
+                        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, overlayChannelName)
+                            .invokeMethod("onOverlayStart", mapOf("id" to id))
                     }
                     ACTION_POINT_STOP -> {
-                        flutterEngine.dartExecutor.binaryMessenger.let {
-                            MethodChannel(it, overlayChannelName)
-                                .invokeMethod("onOverlayStop", null)
-                        }
+                        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, overlayChannelName)
+                            .invokeMethod("onOverlayStop", null)
                     }
                 }
             }
@@ -141,15 +114,10 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
-        try {
-            pointBroadcastReceiver?.let { unregisterReceiver(it) }
-        } catch (_: Exception) {
-        }
+        try { pointBroadcastReceiver?.let { unregisterReceiver(it) } } catch (_: Exception) {}
         stopPushLoop()
         super.onDestroy()
     }
-
-    // ---------- Mock location ----------
 
     private fun isMockLocationEnabled(): Boolean {
         return try {
@@ -158,15 +126,13 @@ class MainActivity : FlutterActivity() {
                 val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     appOps.unsafeCheckOpNoThrow(
                         android.app.AppOpsManager.OPSTR_MOCK_LOCATION,
-                        android.os.Process.myUid(),
-                        packageName
+                        android.os.Process.myUid(), packageName
                     )
                 } else {
                     @Suppress("DEPRECATION")
                     appOps.checkOpNoThrow(
                         android.app.AppOpsManager.OPSTR_MOCK_LOCATION,
-                        android.os.Process.myUid(),
-                        packageName
+                        android.os.Process.myUid(), packageName
                     )
                 }
                 mode == android.app.AppOpsManager.MODE_ALLOWED
@@ -174,9 +140,7 @@ class MainActivity : FlutterActivity() {
                 @Suppress("DEPRECATION")
                 Settings.Secure.getString(contentResolver, Settings.Secure.ALLOW_MOCK_LOCATION) == "1"
             }
-        } catch (_: Exception) {
-            false
-        }
+        } catch (_: Exception) { false }
     }
 
     private fun openDeveloperSettings() {
@@ -189,8 +153,7 @@ class MainActivity : FlutterActivity() {
                 val intent = Intent(Settings.ACTION_SETTINGS)
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 startActivity(intent)
-            } catch (_: Exception) {
-            }
+            } catch (_: Exception) {}
         }
     }
 
@@ -200,25 +163,19 @@ class MainActivity : FlutterActivity() {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 lm.addTestProvider(
-                    providerName,
-                    false, false, false, false, true,
-                    true, true,
+                    providerName, false, false, false, false, true, true, true,
                     android.location.provider.ProviderProperties.POWER_USAGE_LOW,
                     android.location.provider.ProviderProperties.ACCURACY_FINE
                 )
             } else {
                 @Suppress("DEPRECATION")
                 lm.addTestProvider(
-                    providerName,
-                    false, false, false, false, true,
-                    true, true,
-                    Criteria.POWER_LOW,
-                    Criteria.ACCURACY_FINE
+                    providerName, false, false, false, false, true, true, true,
+                    Criteria.POWER_LOW, Criteria.ACCURACY_FINE
                 )
             }
             lm.setTestProviderEnabled(providerName, true)
-        } catch (_: Exception) {
-        }
+        } catch (_: Exception) {}
     }
 
     private fun buildLocation(lat: Double, lon: Double, acc: Double, alt: Double): Location {
@@ -241,30 +198,20 @@ class MainActivity : FlutterActivity() {
 
     private fun pushLocation() {
         val lm = locationManager ?: return
-        try {
-            val loc = buildLocation(currentLat, currentLon, currentAcc, currentAlt)
-            lm.setTestProviderLocation(providerName, loc)
-        } catch (_: Exception) {
-        }
+        try { lm.setTestProviderLocation(providerName, buildLocation(currentLat, currentLon, currentAcc, currentAlt)) } catch (_: Exception) {}
     }
 
     private fun startMock(lat: Double, lon: Double, acc: Double, alt: Double, intervalMs: Long): Boolean {
         return try {
             currentLat = lat; currentLon = lon; currentAcc = acc; currentAlt = alt
-            ensureProvider()
-            pushLocation()
-            startPushLoop(intervalMs)
-            true
+            ensureProvider(); pushLocation(); startPushLoop(intervalMs); true
         } catch (_: Exception) { false }
     }
 
     private fun startPushLoop(intervalMs: Long) {
         stopPushLoop()
         val r = object : Runnable {
-            override fun run() {
-                pushLocation()
-                handler?.postDelayed(this, intervalMs)
-            }
+            override fun run() { pushLocation(); handler?.postDelayed(this, intervalMs) }
         }
         pushRunnable = r
         handler?.postDelayed(r, intervalMs)
@@ -278,8 +225,7 @@ class MainActivity : FlutterActivity() {
     private fun updateMock(lat: Double, lon: Double, acc: Double, alt: Double): Boolean {
         return try {
             currentLat = lat; currentLon = lon; currentAcc = acc; currentAlt = alt
-            pushLocation()
-            true
+            pushLocation(); true
         } catch (_: Exception) { false }
     }
 
@@ -292,8 +238,6 @@ class MainActivity : FlutterActivity() {
         } catch (_: Exception) { false }
     }
 
-    // ---------- Overlay ----------
-
     private fun requestOverlayPermission() {
         try {
             val intent = Intent(
@@ -302,15 +246,13 @@ class MainActivity : FlutterActivity() {
             )
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             startActivity(intent)
-        } catch (_: Exception) {
-        }
+        } catch (_: Exception) {}
     }
 
     private fun isAccessibilityServiceEnabled(): Boolean {
         val service = "$packageName/${MainAccessibilityService::class.java.name}"
         val enabled = Settings.Secure.getString(
-            contentResolver,
-            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+            contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
         ) ?: return false
         return enabled.split(':').any { it.equals(service, ignoreCase = true) }
     }
@@ -320,11 +262,19 @@ class MainActivity : FlutterActivity() {
             val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             startActivity(intent)
-        } catch (_: Exception) {
-        }
+        } catch (_: Exception) {}
     }
 
+    /**
+     * Стартует оверлей. Если сервис уже запущен — не стартует повторно,
+     * а просто обновляет точки.
+     */
     private fun startOverlayService() {
+        if (OverlayBridge.isOverlayServiceRunning) {
+            // Уже запущен — только обновляем точки
+            updateOverlayPoints(OverlayService.currentPointsJson, OverlayService.currentActiveId)
+            return
+        }
         val intent = Intent(this, OverlayService::class.java).apply {
             action = OverlayService.ACTION_START
         }
@@ -350,6 +300,6 @@ class MainActivity : FlutterActivity() {
             putExtra(OverlayService.EXTRA_POINTS_JSON, json)
             if (activeId != null) putExtra(OverlayService.EXTRA_ACTIVE_ID, activeId)
         }
-        startService(intent)
+        try { startService(intent) } catch (_: Exception) {}
     }
 }
