@@ -7,10 +7,9 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
 
 /**
- * Определяет, активно ли целевое приложение (Магнит.Доставка) на переднем плане.
- * Логика: три способа проверки + polling раз в 1 сек. Если не смогли определить —
- * возвращаем "true" (показываем оверлей). Это fallback: лучше показать лишний раз,
- * чем скрыть, когда реально нужно.
+ * Определяет, активно ли целевое приложение.
+ * Если НЕ смогли определить — оставляем СКРЫТО (false).
+ * Показываем оверлей только при уверенности, что Магнит активен.
  */
 class MainAccessibilityService : AccessibilityService() {
 
@@ -55,53 +54,44 @@ class MainAccessibilityService : AccessibilityService() {
     private fun refreshTargetState() {
         val target = OverlayBridge.TARGET_PACKAGE
 
-        val result = checkWindows(target)
-            ?: checkRootActive(target)
-            ?: checkFocus(target)
+        val isTarget = checkWindows(target)
+            || checkRootActive(target)
+            || checkFocus(target)
 
-        // Fallback: если ни один способ не сработал — показываем (true).
-        val isTarget = result ?: true
         OverlayBridge.setTargetForeground(isTarget)
     }
 
-    /** null = не смогли определить, true/false = определили. */
-    private fun checkWindows(target: String): Boolean? {
+    private fun checkWindows(target: String): Boolean {
         return try {
             val windows: List<AccessibilityWindowInfo>? = windows
-            if (windows == null || windows.isEmpty()) return null
-            var sawAnyPkg = false
+            if (windows == null || windows.isEmpty()) return false
             for (w in windows) {
                 val pkg = try { w.root?.packageName?.toString() } catch (_: Exception) { null }
-                if (pkg != null) {
-                    sawAnyPkg = true
-                    if (pkg == target) return true
-                }
+                if (pkg == target) return true
             }
-            if (sawAnyPkg) false else null
+            false
         } catch (_: Exception) {
-            null
+            false
         }
     }
 
-    private fun checkRootActive(target: String): Boolean? {
+    private fun checkRootActive(target: String): Boolean {
         return try {
             val active = rootInActiveWindow
-            val pkg = active?.packageName?.toString() ?: return null
-            pkg == target
+            active?.packageName?.toString() == target
         } catch (_: Exception) {
-            null
+            false
         }
     }
 
-    private fun checkFocus(target: String): Boolean? {
+    private fun checkFocus(target: String): Boolean {
         return try {
             val focused = findFocus(
                 android.view.accessibility.AccessibilityNodeInfo.FOCUS_ACCESSIBILITY
             )
-            val pkg = focused?.packageName?.toString() ?: return null
-            pkg == target
+            focused?.packageName?.toString() == target
         } catch (_: Exception) {
-            null
+            false
         }
     }
 }
