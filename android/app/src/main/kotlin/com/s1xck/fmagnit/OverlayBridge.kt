@@ -3,10 +3,9 @@ package com.s1xck.fmagnit
 object OverlayBridge {
     const val TARGET_PACKAGE = "com.magnit.delivery.courier"
 
-    // По умолчанию — показываем. Если детектор уверенно скажет «не Магнит» — скроет.
-    // Это защита от «оверлей не виден вообще» на EMUI.
+    // По умолчанию скрыто. Показываем только когда детектор подтвердит Магнит.
     @Volatile
-    var isTargetAppForeground: Boolean = true
+    var isTargetAppForeground: Boolean = false
         private set
 
     @Volatile
