@@ -66,6 +66,11 @@ class OverlayService : Service() {
     private var arrowView: TextView? = null
     private var dotView: TextView? = null
 
+    // Защита: если за это время Accessibility не поднял флаг — показываем принудительно
+    private val startTime = SystemClock.elapsedRealtime()
+    private val fallbackDelayMs = 3000L
+    private var fallbackApplied = false
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -85,6 +90,11 @@ class OverlayService : Service() {
         }
 
         buildOverlayView()
+
+        // Проверяем флаг каждую секунду — если Accessibility так и не ожил,
+        // через fallbackDelayMs показываем оверлей принудительно.
+        startVisibilityWatchdog()
+
         applyVisibility()
     }
 
@@ -116,6 +126,16 @@ class OverlayService : Service() {
         rootView = null
         OverlayBridge.setOverlayRunning(false)
         super.onDestroy()
+    }
+
+    private fun startVisibilityWatchdog() {
+        val r = object : Runnable {
+            override fun run() {
+                applyVisibility()
+                handler.postDelayed(this, 1000)
+            }
+        }
+        handler.postDelayed(r, 1000)
     }
 
     private fun createNotificationChannel() {
@@ -258,11 +278,6 @@ class OverlayService : Service() {
             ?: "не выбрано"
     }
 
-    /**
-     * Важно: из ACTION_DOWN возвращаем TRUE, чтобы система отдала нам
-     * все последующие события (MOVE/UP) в этой серии. Иначе UP может уйти
-     * не нам, и тап не сработает.
-     */
     private fun attachHeaderGestures(view: View) {
         var downTime = 0L
         var initialY = 0
@@ -278,7 +293,7 @@ class OverlayService : Service() {
                     initialTouchY = event.rawY
                     moved = false
                     handled = false
-                    true // ← вот ключевая правка
+                    true
                 }
                 MotionEvent.ACTION_MOVE -> {
                     if (handled) return@setOnTouchListener true
@@ -432,9 +447,24 @@ class OverlayService : Service() {
         } catch (_: Exception) { emptyList() }
     }
 
+    /**
+     * Показываем, если:
+     *  1. Accessibility подтвердил, что Магнит активен, ИЛИ
+     *  2. Прошло больше fallbackDelayMs с момента старта сервиса и
+     *     флаг так и не поднялся ни разу → показываем принудительно.
+     */
     private fun applyVisibility() {
         val v = rootView ?: return
-        v.visibility = if (OverlayBridge.isTargetAppForeground) View.VISIBLE else View.GONE
+        val targetOk = OverlayBridge.isTargetAppForeground
+
+        if (!targetOk && !fallbackApplied) {
+            val elapsed = SystemClock.elapsedRealtime() - startTime
+            if (elapsed > fallbackDelayMs) {
+                fallbackApplied = true
+            }
+        }
+
+        v.visibility = if (targetOk || fallbackApplied) View.VISIBLE else View.GONE
     }
 }
 
