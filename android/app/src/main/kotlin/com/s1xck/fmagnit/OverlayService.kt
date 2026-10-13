@@ -21,7 +21,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
-import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -41,8 +40,6 @@ class OverlayService : Service() {
         private const val COLOR_INACTIVE = 0xFF2A2A2A.toInt()
         private const val COLOR_DOT_IDLE = 0xFFE30613.toInt()
         private const val COLOR_DOT_ACTIVE = 0xFF00C853.toInt()
-        private const val COLOR_BTN_IDLE = 0xFFE30613.toInt()
-        private const val COLOR_BTN_ACTIVE = 0xFF00C853.toInt()
 
         const val ACTION_START = "com.s1xck.fmagnit.OVERLAY_START"
         const val ACTION_STOP = "com.s1xck.fmagnit.OVERLAY_STOP"
@@ -64,10 +61,9 @@ class OverlayService : Service() {
 
     private val handler = Handler(Looper.getMainLooper())
 
-    private var panelContainer: LinearLayout? = null
-    private var fabButton: TextView? = null
     private var contentContainer: LinearLayout? = null
     private var activeLabel: TextView? = null
+    private var arrowView: TextView? = null
     private var dotView: TextView? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -161,7 +157,7 @@ class OverlayService : Service() {
         TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics
     ).toInt()
 
-    private fun roundedBgFull(color: Int, radiusDp: Int): GradientDrawable {
+    private fun roundedBg(color: Int, radiusDp: Int): GradientDrawable {
         val d = GradientDrawable()
         d.shape = GradientDrawable.RECTANGLE
         d.cornerRadius = dp(radiusDp).toFloat()
@@ -169,30 +165,13 @@ class OverlayService : Service() {
         return d
     }
 
-    private fun leftRoundedBg(color: Int, radiusDp: Int): GradientDrawable {
-        val d = GradientDrawable()
-        d.shape = GradientDrawable.RECTANGLE
-        d.setColor(color)
-        val r = dp(radiusDp).toFloat()
-        d.cornerRadii = floatArrayOf(
-            r, r,    // top-left
-            0f, 0f,  // top-right
-            0f, 0f,  // bottom-right
-            r, r     // bottom-left
-        )
-        return d
-    }
-
     private fun buildOverlayView() {
         val ctx = this
 
-        val root = FrameLayout(ctx)
-
-        panelContainer = LinearLayout(ctx).apply {
+        val root = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(10), dp(16), dp(10))
-            background = leftRoundedBg(COLOR_BG, 16)
-            visibility = View.GONE
+            background = roundedBg(COLOR_BG, 16)
         }
 
         val header = LinearLayout(ctx).apply {
@@ -222,52 +201,28 @@ class OverlayService : Service() {
             text = currentActiveNameOrPlaceholder()
             setTextColor(COLOR_MUTED)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setPadding(0, 0, dp(12), 0)
+        }
+
+        arrowView = TextView(ctx).apply {
+            text = "▲"
+            setTextColor(COLOR_TEXT)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
         }
 
         header.addView(dotView)
         header.addView(title)
         header.addView(activeLabel)
-        panelContainer!!.addView(header)
-
-        panelContainer!!.addView(View(ctx).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(1)
-            ).also { it.topMargin = dp(10); it.bottomMargin = dp(8) }
-            setBackgroundColor(0x22FFFFFF)
-        })
+        header.addView(arrowView)
+        root.addView(header)
 
         contentContainer = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
         }
-        panelContainer!!.addView(contentContainer)
+        root.addView(contentContainer)
 
-        val panelWidth = dp(260)
-        val panelLp = FrameLayout.LayoutParams(
-            panelWidth,
-            FrameLayout.LayoutParams.WRAP_CONTENT
-        ).apply {
-            gravity = Gravity.BOTTOM or Gravity.END
-            rightMargin = dp(56)
-            bottomMargin = 0
-        }
-        root.addView(panelContainer, panelLp)
-
-        fabButton = TextView(ctx).apply {
-            text = "f"
-            setTextColor(COLOR_TEXT)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
-            setTypeface(typeface, Typeface.BOLD)
-            gravity = Gravity.CENTER
-            background = leftRoundedBg(COLOR_BTN_IDLE, 16)
-        }
-        val fabLp = FrameLayout.LayoutParams(dp(56), dp(56)).apply {
-            gravity = Gravity.BOTTOM or Gravity.END
-            rightMargin = 0
-            bottomMargin = 0
-        }
-        root.addView(fabButton, fabLp)
-
-        attachFabGestures(fabButton!!)
+        attachHeaderGestures(header)
 
         rootView = root
 
@@ -294,12 +249,14 @@ class OverlayService : Service() {
         }
 
         applyDotColor()
-        applyButtonColor()
         rebuildContent()
-        applyVisibility()
     }
 
-    private fun attachFabGestures(view: View) {
+    /**
+     * Тап по шапке — раскрывает/сворачивает панель.
+     * Потянуть вверх/вниз — сдвигает окно.
+     */
+    private fun attachHeaderGestures(view: View) {
         var downTime = 0L
         var initialY = 0
         var initialTouchY = 0f
@@ -338,7 +295,6 @@ class OverlayService : Service() {
 
     private fun toggleExpanded() {
         expanded = !expanded
-        panelContainer?.visibility = if (expanded) View.VISIBLE else View.GONE
         rebuildContent()
     }
 
@@ -352,23 +308,24 @@ class OverlayService : Service() {
         dotView?.setTextColor(if (isRunning) COLOR_DOT_ACTIVE else COLOR_DOT_IDLE)
     }
 
-    private fun applyButtonColor() {
-        val color = if (isRunning) COLOR_BTN_ACTIVE else COLOR_BTN_IDLE
-        val textColor = if (isRunning) 0xFF000000.toInt() else COLOR_TEXT
-        fabButton?.background = leftRoundedBg(color, 16)
-        fabButton?.setTextColor(textColor)
-    }
-
     private fun rebuildContent() {
         val ctx = this
         val container = contentContainer ?: return
         container.removeAllViews()
 
+        container.visibility = if (expanded) View.VISIBLE else View.GONE
+        arrowView?.text = if (expanded) "▼" else "▲"
         activeLabel?.text = currentActiveNameOrPlaceholder()
         applyDotColor()
-        applyButtonColor()
 
         if (!expanded) return
+
+        container.addView(View(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(1)
+            ).also { it.topMargin = dp(12); it.bottomMargin = dp(8) }
+            setBackgroundColor(0x22FFFFFF)
+        })
 
         val points = parsePoints(currentPointsJson)
         if (points.isEmpty()) {
@@ -410,7 +367,7 @@ class OverlayService : Service() {
             setTypeface(typeface, Typeface.BOLD)
             gravity = Gravity.CENTER
             setPadding(dp(16), dp(14), dp(16), dp(14))
-            background = roundedBgFull(COLOR_ACCENT, 14)
+            background = roundedBg(COLOR_ACCENT, 14)
             setOnClickListener {
                 val id = currentActiveId
                 if (id != null) {
@@ -434,7 +391,7 @@ class OverlayService : Service() {
             setTypeface(typeface, Typeface.BOLD)
             gravity = Gravity.CENTER
             setPadding(dp(16), dp(14), dp(16), dp(14))
-            background = roundedBgFull(COLOR_INACTIVE, 14)
+            background = roundedBg(COLOR_INACTIVE, 14)
             setOnClickListener {
                 isRunning = false
                 OverlayPrefs.saveRunning(this@OverlayService, false)
@@ -465,10 +422,6 @@ class OverlayService : Service() {
         } catch (_: Exception) { emptyList() }
     }
 
-    /**
-     * Если Usage Access выдан — видимость управляется флагом.
-     * Если НЕ выдан — показываем всегда (fallback).
-     */
     private fun applyVisibility() {
         val v = rootView ?: return
         val usageOk = ForegroundDetector.hasUsageAccess(this)
