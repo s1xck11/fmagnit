@@ -7,8 +7,10 @@ import '../main.dart';
 import '../models/waypoint.dart';
 import '../services/mock_location_service.dart';
 import '../services/overlay_service.dart';
+import '../services/service_health.dart';
 import '../storage/waypoint_storage.dart';
 import 'address_search_dialog.dart';
+import 'health_page.dart';
 import 'import_export_dialogs.dart';
 import 'mock_test_panel.dart';
 import 'sort_menu.dart';
@@ -59,9 +61,13 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _pollOverlayState() async {
     final running = await _overlay.isOverlayRunning();
+    final ac = await _overlay.hasAccessibilityPermission();
     if (!mounted) return;
-    if (running != _overlayRunning) {
-      setState(() => _overlayRunning = running);
+    if (running != _overlayRunning || ac != _accessPerm) {
+      setState(() {
+        _overlayRunning = running;
+        _accessPerm = ac;
+      });
     }
   }
 
@@ -125,6 +131,13 @@ class _HomePageState extends State<HomePage> {
       await _pushPointsToOverlay();
     }
     await Future.delayed(const Duration(milliseconds: 600));
+    await _refreshPermissions();
+  }
+
+  Future<void> _openHealth() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const HealthPage()),
+    );
     await _refreshPermissions();
   }
 
@@ -479,6 +492,43 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Widget _healthBanner() {
+    if (_accessPerm || !_overlayPerm) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: _openHealth,
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: FMagnitTheme.accent.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: FMagnitTheme.accent),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.warning_amber_rounded,
+                  color: FMagnitTheme.accent),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'Accessibility выключен. Сервис может работать нестабильно. '
+                  'Нажми, чтобы узнать, как починить.',
+                  style: TextStyle(
+                    color: FMagnitTheme.textPrimary,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: FMagnitTheme.textMuted),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -486,6 +536,11 @@ class _HomePageState extends State<HomePage> {
       appBar: AppBar(
         title: const Text('fmagnit'),
         actions: [
+          IconButton(
+            onPressed: _openHealth,
+            icon: const Icon(Icons.health_and_safety),
+            tooltip: 'Здоровье сервисов',
+          ),
           IconButton(
             onPressed: _chooseSort,
             icon: Icon(_sortMode.icon),
@@ -622,6 +677,7 @@ class _HomePageState extends State<HomePage> {
                     ),
                   ),
                 ),
+                _healthBanner(),
                 Expanded(
                   child: _waypoints.isEmpty
                       ? const Center(
