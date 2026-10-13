@@ -73,6 +73,9 @@ class MainActivity : FlutterActivity() {
                     "requestOverlayPermission" -> { requestOverlayPermission(); result.success(null) }
                     "hasAccessibilityPermission" -> result.success(isAccessibilityServiceEnabled())
                     "openAccessibilitySettings" -> { openAccessibilitySettings(); result.success(null) }
+                    "hasUsageAccess" -> result.success(ForegroundDetector.hasUsageAccess(this))
+                    "openUsageAccessSettings" -> { openUsageAccessSettings(); result.success(null) }
+                    "getForegroundPackage" -> result.success(ForegroundDetector.getForegroundPackage(this))
                     "startOverlay" -> { startOverlayService(); result.success(true) }
                     "stopOverlay" -> { stopOverlayService(); result.success(true) }
                     "isOverlayRunning" -> result.success(OverlayBridge.isOverlayServiceRunning)
@@ -263,6 +266,20 @@ class MainActivity : FlutterActivity() {
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             startActivity(intent)
         } catch (_: Exception) {}
+    }
+
+    private fun openUsageAccessSettings() {
+        try {
+            val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(intent)
+        } catch (_: Exception) {
+            try {
+                val intent = Intent(Settings.ACTION_SETTINGS)
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent)
+            } catch (_: Exception) {}
+        }
     }
 
     private fun startOverlayService() {
