@@ -16,21 +16,36 @@ import android.provider.Settings
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.sqrt
+import kotlin.random.Random
 
 class MainActivity : FlutterActivity() {
 
     private val mockChannelName = "com.s1xck.fmagnit/mock_location"
     private val overlayChannelName = "com.s1xck.fmagnit/overlay"
-    private val providerName = LocationManager.GPS_PROVIDER
+
+    private val providers = listOf(
+        LocationManager.GPS_PROVIDER,
+        LocationManager.NETWORK_PROVIDER
+    )
 
     private var locationManager: LocationManager? = null
     private var handler: Handler? = null
     private var pushRunnable: Runnable? = null
 
-    private var currentLat: Double = 0.0
-    private var currentLon: Double = 0.0
-    private var currentAcc: Double = 3.0
-    private var currentAlt: Double = 0.0
+    // Базовая точка (куда мы «телепортируемся»)
+    private var baseLat: Double = 0.0
+    private var baseLon: Double = 0.0
+    private var baseAcc: Double = 3.0
+    private var baseAlt: Double = 0.0
+
+    // Текущая отображаемая точка (с шумом)
+    private var displayLat: Double = 0.0
+    private var displayLon: Double = 0.0
+
+    private var isMockRunning = false
 
     private var pointBroadcastReceiver: BroadcastReceiver? = null
 
@@ -122,6 +137,8 @@ class MainActivity : FlutterActivity() {
         super.onDestroy()
     }
 
+    // ---------- Разрешения ----------
+
     private fun isMockLocationEnabled(): Boolean {
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -160,7 +177,9 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun ensureProvider() {
+    // ---------- Mock: провайдеры ----------
+
+    private fun ensureProvider(providerName: String) {
         val lm = locationManager ?: return
         try { lm.removeTestProvider(providerName) } catch (_: Exception) {}
         try {
@@ -181,7 +200,15 @@ class MainActivity : FlutterActivity() {
         } catch (_: Exception) {}
     }
 
-    private fun buildLocation(lat: Double, lon: Double, acc: Double, alt: Double): Location {
+    private fun buildLocation(
+        providerName: String,
+        lat: Double,
+        lon: Double,
+        acc: Double,
+        alt: Double,
+        speed: Float,
+        bearing: Float
+    ): Location {
         val loc = Location(providerName)
         loc.latitude = lat
         loc.longitude = lon
@@ -191,33 +218,92 @@ class MainActivity : FlutterActivity() {
         loc.elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             loc.verticalAccuracyMeters = acc.toFloat()
-            loc.speedAccuracyMetersPerSecond = acc.toFloat()
-            loc.bearingAccuracyDegrees = acc.toFloat()
+            loc.speedAccuracyMetersPerSecond = (acc * 0.4).toFloat()
+            loc.bearingAccuracyDegrees = 20f
         }
-        loc.speed = 0f
-        loc.bearing = 0f
+        loc.speed = speed
+        loc.bearing = bearing
         return loc
+    }
+
+    // ---------- Джиттер (реалистичное дрожание GPS) ----------
+
+    /**
+     * Небольшой случайный сдвиг от базы. Максимальное отклонение
+     * — около [maxOffsetMeters]. Распределение — нормальное-ish,
+     * но простое: сумма двух равномерных.
+     */
+    private fun applyJitter(offsetMeters: Double = 2.5) {
+        // Отклонение в метрах (в среднем меньше 2-3 м, изредка больше)
+        val r = Random.nextDouble(-1.0, 1.0) + Random.nextDouble(-1.0, 1.0)
+        val angle = Random.nextDouble(0.0, 2 * Math.PI)
+        val dx = r * offsetMeters * cos(angle)
+        val dy = r * offsetMeters * sin(angle)
+
+        // Перевод метров в градусы (приблизительно)
+        val metersPerDegLat = 111_320.0
+        val metersPerDegLon = 111_320.0 * cos(Math.toRadians(baseLat))
+
+        displayLat = baseLat + dy / metersPerDegLat
+        displayLon = baseLon + dx / metersPerDegLon
     }
 
     private fun pushLocation() {
         val lm = locationManager ?: return
-        try { lm.setTestProviderLocation(providerName, buildLocation(currentLat, currentLon, currentAcc, currentAlt)) } catch (_: Exception) {}
+        if (!isMockRunning) return
+
+        // Генерируем новый джиттер
+        applyJitter()
+
+        // Точность плавает вокруг базовой: ±3 м
+        val jitterAcc = baseAcc + Random.nextDouble(-3.0, 3.0)
+        val acc = jitterAcc.coerceAtLeast(1.0)
+
+        // Микро-скорость и курс — как у реального GPS в покое
+        val speed = Random.nextFloat() * 0.4f       // 0 – 0.4 м/с
+        val bearing = Random.nextFloat() * 360f     // любой курс
+
+        try {
+            for (p in providers) {
+                val loc = buildLocation(p, displayLat, displayLon, acc, baseAlt, speed, bearing)
+                try { lm.setTestProviderLocation(p, loc) } catch (_: Exception) {}
+            }
+        } catch (_: Exception) {}
     }
+
+    // ---------- Старт / стоп мока ----------
 
     private fun startMock(lat: Double, lon: Double, acc: Double, alt: Double, intervalMs: Long): Boolean {
         return try {
-            currentLat = lat; currentLon = lon; currentAcc = acc; currentAlt = alt
-            ensureProvider(); pushLocation(); startPushLoop(intervalMs); true
+            baseLat = lat
+            baseLon = lon
+            baseAcc = acc
+            baseAlt = alt
+
+            displayLat = lat
+            displayLon = lon
+
+            for (p in providers) ensureProvider(p)
+
+            isMockRunning = true
+            pushLocation()
+            startPushLoop(intervalMs)
+            true
         } catch (_: Exception) { false }
     }
 
-    private fun startPushLoop(intervalMs: Long) {
+    private fun startPushLoop(baseIntervalMs: Long) {
         stopPushLoop()
         val r = object : Runnable {
-            override fun run() { pushLocation(); handler?.postDelayed(this, intervalMs) }
+            override fun run() {
+                pushLocation()
+                // Случайный интервал: ±30% от базового
+                val jitter = baseIntervalMs * (0.7 + Random.nextDouble() * 0.6)
+                handler?.postDelayed(this, jitter.toLong())
+            }
         }
         pushRunnable = r
-        handler?.postDelayed(r, intervalMs)
+        handler?.postDelayed(r, baseIntervalMs)
     }
 
     private fun stopPushLoop() {
@@ -227,19 +313,30 @@ class MainActivity : FlutterActivity() {
 
     private fun updateMock(lat: Double, lon: Double, acc: Double, alt: Double): Boolean {
         return try {
-            currentLat = lat; currentLon = lon; currentAcc = acc; currentAlt = alt
-            pushLocation(); true
+            baseLat = lat
+            baseLon = lon
+            baseAcc = acc
+            baseAlt = alt
+            displayLat = lat
+            displayLon = lon
+            pushLocation()
+            true
         } catch (_: Exception) { false }
     }
 
     private fun stopMock(): Boolean {
         return try {
+            isMockRunning = false
             stopPushLoop()
-            try { locationManager?.setTestProviderEnabled(providerName, false) } catch (_: Exception) {}
-            try { locationManager?.removeTestProvider(providerName) } catch (_: Exception) {}
+            for (p in providers) {
+                try { locationManager?.setTestProviderEnabled(p, false) } catch (_: Exception) {}
+                try { locationManager?.removeTestProvider(p) } catch (_: Exception) {}
+            }
             true
         } catch (_: Exception) { false }
     }
+
+    // ---------- Overlay ----------
 
     private fun requestOverlayPermission() {
         try {
