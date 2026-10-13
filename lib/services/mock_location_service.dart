@@ -1,22 +1,49 @@
 import 'package:flutter/services.dart';
 
+class RealLocation {
+  final double latitude;
+  final double longitude;
+  final double accuracy;
+  final int ageMs;
+
+  RealLocation({
+    required this.latitude,
+    required this.longitude,
+    required this.accuracy,
+    required this.ageMs,
+  });
+
+  factory RealLocation.fromMap(Map<dynamic, dynamic> m) {
+    return RealLocation(
+      latitude: (m['latitude'] as num).toDouble(),
+      longitude: (m['longitude'] as num).toDouble(),
+      accuracy: (m['accuracy'] as num).toDouble(),
+      ageMs: (m['ageMs'] as num).toInt(),
+    );
+  }
+
+  Duration get age => Duration(milliseconds: ageMs);
+}
+
 class MockLocationService {
   static const MethodChannel _channel =
       MethodChannel('com.s1xck.fmagnit/mock_location');
 
-  /// Проверяет, выбрано ли наше приложение как Mock Location app
-  /// в настройках разработчика.
   Future<bool> isMockLocationEnabled() async {
     final result = await _channel.invokeMethod<bool>('isMockLocationEnabled');
     return result ?? false;
   }
 
-  /// Открывает экран "Выбор приложения для подмены геолокации".
   Future<void> openDeveloperSettings() async {
     await _channel.invokeMethod('openDeveloperSettings');
   }
 
-  /// Запускает mock-провайдер с указанными координатами.
+  /// Запущен ли mock сейчас — нативный флаг.
+  Future<bool> isMockRunning() async {
+    final r = await _channel.invokeMethod<bool>('isMockRunning');
+    return r ?? false;
+  }
+
   Future<bool> startMock({
     required double latitude,
     required double longitude,
@@ -34,7 +61,6 @@ class MockLocationService {
     return result ?? false;
   }
 
-  /// Обновляет координаты у уже запущенного провайдера.
   Future<bool> updateMock({
     required double latitude,
     required double longitude,
@@ -50,9 +76,16 @@ class MockLocationService {
     return result ?? false;
   }
 
-  /// Останавливает mock и удаляет провайдер.
   Future<bool> stopMock() async {
     final result = await _channel.invokeMethod<bool>('stopMock');
     return result ?? false;
+  }
+
+  /// Возвращает реальную позицию или null, если её нет.
+  /// Использовать только когда mock НЕ запущен — иначе вернёт mock-точку.
+  Future<RealLocation?> getRealLocation() async {
+    final raw = await _channel.invokeMethod('getRealLocation');
+    if (raw == null) return null;
+    return RealLocation.fromMap(raw as Map<dynamic, dynamic>);
   }
 }
