@@ -32,6 +32,7 @@ class OverlayService : Service() {
         const val NOTIFICATION_ID = 4201
         const val CHANNEL_ID = "fmagnit_overlay"
 
+        // Стиль под тёмный интерфейс Магнит.Доставка
         private const val COLOR_BG = 0xEE0A0A0A.toInt()
         private const val COLOR_ACCENT = 0xFFE30613.toInt()
         private const val COLOR_TEXT = 0xFFFFFFFF.toInt()
@@ -47,8 +48,6 @@ class OverlayService : Service() {
 
         @Volatile var currentPointsJson: String = "[]"
         @Volatile var currentActiveId: String? = null
-
-        @Volatile var instanceAlive: Boolean = false
     }
 
     private var windowManager: WindowManager? = null
@@ -59,32 +58,21 @@ class OverlayService : Service() {
     private var isRunning = false
 
     private val handler = Handler(Looper.getMainLooper())
-    private var visibilityRunnable: Runnable? = null
 
     private var contentContainer: LinearLayout? = null
     private var activeLabel: TextView? = null
-    private var headerContainer: LinearLayout? = null
     private var arrowView: TextView? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
-        instanceAlive = true
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
 
         OverlayBridge.setOverlayRunning(true)
-        OverlayBridge.onOverlayStateChanged {
-            handler.post { applyVisibility() }
-        }
-
         buildOverlayView()
-        startVisibilityLoop()
-
-        applyVisibility()
-        handler.postDelayed({ applyVisibility() }, 800)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -100,30 +88,10 @@ class OverlayService : Service() {
     }
 
     override fun onDestroy() {
-        instanceAlive = false
-        stopVisibilityLoop()
         try { rootView?.let { windowManager?.removeView(it) } } catch (_: Exception) {}
         rootView = null
         OverlayBridge.setOverlayRunning(false)
-        OverlayBridge.onOverlayStateChanged {}
         super.onDestroy()
-    }
-
-    private fun startVisibilityLoop() {
-        stopVisibilityLoop()
-        val r = object : Runnable {
-            override fun run() {
-                applyVisibility()
-                handler.postDelayed(this, 1000)
-            }
-        }
-        visibilityRunnable = r
-        handler.postDelayed(r, 1000)
-    }
-
-    private fun stopVisibilityLoop() {
-        visibilityRunnable?.let { handler.removeCallbacks(it) }
-        visibilityRunnable = null
     }
 
     private fun createNotificationChannel() {
@@ -165,8 +133,6 @@ class OverlayService : Service() {
         TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics
     ).toInt()
 
-    private fun screenWidth(): Int = resources.displayMetrics.widthPixels
-
     private fun roundedBg(color: Int, radiusDp: Int): GradientDrawable {
         val d = GradientDrawable()
         d.shape = GradientDrawable.RECTANGLE
@@ -180,28 +146,29 @@ class OverlayService : Service() {
 
         val root = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(10), dp(14), dp(10))
+            setPadding(dp(16), dp(10), dp(16), dp(10))
             background = roundedBg(COLOR_BG, 16)
         }
 
+        // Шапка — фиксированной высоты ≈56dp, как навбар
         val header = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(40)
             setOnClickListener { toggleExpanded() }
         }
-        headerContainer = header
 
         val dot = TextView(ctx).apply {
             text = "●"
             setTextColor(COLOR_ACCENT)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            setPadding(0, 0, dp(8), 0)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setPadding(0, 0, dp(10), 0)
         }
 
         val title = TextView(ctx).apply {
             text = "fmagnit"
             setTextColor(COLOR_TEXT)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
             setTypeface(typeface, Typeface.BOLD)
             layoutParams = LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
@@ -211,14 +178,14 @@ class OverlayService : Service() {
         activeLabel = TextView(ctx).apply {
             text = "не выбрано"
             setTextColor(COLOR_MUTED)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             setPadding(0, 0, dp(12), 0)
         }
 
         arrowView = TextView(ctx).apply {
             text = "▲"
             setTextColor(COLOR_TEXT)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
         }
 
         header.addView(dot)
@@ -241,17 +208,15 @@ class OverlayService : Service() {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
 
-        val width = screenWidth() - dp(32)
-
         layoutParams = WindowManager.LayoutParams(
-            width,
+            WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             type,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            y = dp(80)
+            y = 0
             x = 0
         }
 
@@ -262,7 +227,6 @@ class OverlayService : Service() {
         }
 
         rebuildContent()
-        applyVisibility()
     }
 
     private fun attachDragHandler(view: View) {
@@ -307,19 +271,21 @@ class OverlayService : Service() {
 
         if (!expanded) return
 
+        // Разделитель
         container.addView(View(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(1)
-            ).also { it.topMargin = dp(10); it.bottomMargin = dp(6) }
+            ).also { it.topMargin = dp(12); it.bottomMargin = dp(8) }
             setBackgroundColor(0x22FFFFFF)
         })
 
+        // Список точек
         val points = parsePoints(currentPointsJson)
         if (points.isEmpty()) {
             container.addView(TextView(ctx).apply {
                 text = "Нет точек. Добавь в fmagnit."
                 setTextColor(COLOR_MUTED)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
                 setPadding(0, dp(6), 0, dp(6))
             })
         } else {
@@ -328,8 +294,8 @@ class OverlayService : Service() {
                 val row = TextView(ctx).apply {
                     text = (if (isActive) "● " else "○ ") + name
                     setTextColor(if (isActive) COLOR_ACCENT else COLOR_TEXT)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                    setPadding(dp(4), dp(10), dp(4), dp(10))
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+                    setPadding(dp(4), dp(12), dp(4), dp(12))
                     setOnClickListener {
                         currentActiveId = id
                         activeLabel?.text = name
@@ -340,19 +306,20 @@ class OverlayService : Service() {
             }
         }
 
+        // Кнопки Старт/Стоп
         val buttonsRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(10), 0, 0)
+            setPadding(0, dp(12), 0, dp(4))
         }
 
         val playBtn = TextView(ctx).apply {
             text = if (isRunning) "ЗАПУЩЕНО" else "СТАРТ"
             setTextColor(COLOR_TEXT)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
             setTypeface(typeface, Typeface.BOLD)
             gravity = Gravity.CENTER
-            setPadding(dp(14), dp(12), dp(14), dp(12))
+            setPadding(dp(16), dp(14), dp(16), dp(14))
             background = roundedBg(COLOR_ACCENT, 14)
             setOnClickListener {
                 val id = currentActiveId
@@ -366,16 +333,16 @@ class OverlayService : Service() {
             }
             layoutParams = LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
-            ).also { it.rightMargin = dp(6) }
+            ).also { it.rightMargin = dp(8) }
         }
 
         val stopBtn = TextView(ctx).apply {
             text = "СТОП"
             setTextColor(COLOR_TEXT)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
             setTypeface(typeface, Typeface.BOLD)
             gravity = Gravity.CENTER
-            setPadding(dp(14), dp(12), dp(14), dp(12))
+            setPadding(dp(16), dp(14), dp(16), dp(14))
             background = roundedBg(COLOR_INACTIVE, 14)
             setOnClickListener {
                 isRunning = false
@@ -384,7 +351,7 @@ class OverlayService : Service() {
             }
             layoutParams = LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
-            ).also { it.leftMargin = dp(6) }
+            ).also { it.leftMargin = dp(8) }
         }
 
         buttonsRow.addView(playBtn)
@@ -404,11 +371,6 @@ class OverlayService : Service() {
             }
             out
         } catch (_: Exception) { emptyList() }
-    }
-
-    private fun applyVisibility() {
-        val v = rootView ?: return
-        v.visibility = if (OverlayBridge.isTargetAppForeground) View.VISIBLE else View.GONE
     }
 }
 
