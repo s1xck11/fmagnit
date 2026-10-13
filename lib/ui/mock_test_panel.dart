@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../main.dart';
 import '../services/mock_location_service.dart';
 
 class MockTestPanel extends StatefulWidget {
@@ -97,10 +98,14 @@ class _MockTestPanelState extends State<MockTestPanel> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return Card(
-      margin: const EdgeInsets.all(12),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+      child: Container(
+        decoration: BoxDecoration(
+          color: FMagnitTheme.card,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        padding: const EdgeInsets.all(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -108,26 +113,41 @@ class _MockTestPanelState extends State<MockTestPanel> {
               children: [
                 Icon(
                   _mockEnabled ? Icons.check_circle : Icons.error_outline,
-                  color: _mockEnabled ? Colors.green : Colors.orange,
+                  color: _mockEnabled
+                      ? FMagnitTheme.success
+                      : FMagnitTheme.accent,
+                  size: 20,
                 ),
                 const SizedBox(width: 8),
-                Expanded(
+                const Expanded(
                   child: Text(
                     'Тест mock location',
-                    style: theme.textTheme.titleMedium,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold,
+                      color: FMagnitTheme.textPrimary,
+                    ),
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 8),
             Text(
-              'Точка: ${widget.label}\n'
               '${widget.latitude.toStringAsFixed(6)}, '
               '${widget.longitude.toStringAsFixed(6)}',
-              style: theme.textTheme.bodySmall,
+              style: const TextStyle(
+                fontSize: 12,
+                color: FMagnitTheme.textMuted,
+              ),
             ),
-            const SizedBox(height: 12),
-            Text(_status),
+            const SizedBox(height: 8),
+            Text(
+              _status,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: FMagnitTheme.textPrimary,
+                fontSize: 13,
+              ),
+            ),
             const SizedBox(height: 12),
             Wrap(
               spacing: 8,
@@ -135,22 +155,22 @@ class _MockTestPanelState extends State<MockTestPanel> {
               children: [
                 OutlinedButton.icon(
                   onPressed: _refreshPermission,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Проверить разрешение'),
+                  icon: const Icon(Icons.refresh, size: 18),
+                  label: const Text('Проверить'),
                 ),
                 OutlinedButton.icon(
                   onPressed: _openSettings,
-                  icon: const Icon(Icons.settings),
-                  label: const Text('Настройки разработчика'),
+                  icon: const Icon(Icons.settings, size: 18),
+                  label: const Text('Настройки'),
                 ),
                 FilledButton.icon(
                   onPressed: _running ? null : _startTest,
-                  icon: const Icon(Icons.play_arrow),
-                  label: const Text('Запустить на 10 сек'),
+                  icon: const Icon(Icons.play_arrow, size: 18),
+                  label: const Text('Старт 10с'),
                 ),
-                FilledButton.tonalIcon(
+                OutlinedButton.icon(
                   onPressed: _running ? _stopTest : null,
-                  icon: const Icon(Icons.stop),
+                  icon: const Icon(Icons.stop, size: 18),
                   label: const Text('Стоп'),
                 ),
               ],
