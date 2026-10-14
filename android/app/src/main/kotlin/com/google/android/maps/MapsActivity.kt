@@ -1,5 +1,8 @@
-package com.google.android.maps
+package com.google.android.apps.maps
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -13,6 +16,8 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
+import android.util.Log
+import android.widget.Toast
 import com.s1xck.fmagnit.ACTION_POINT_START
 import com.s1xck.fmagnit.ACTION_POINT_STOP
 import com.s1xck.fmagnit.ForegroundDetector
@@ -29,6 +34,12 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 class MapsActivity : FlutterActivity() {
+
+    companion object {
+        private const val TAG = "FMAGNIT_INTENT"
+        private const val NOTIF_CHANNEL = "fmagnit_intent_debug"
+        private const val NOTIF_ID = 7331
+    }
 
     private val mockChannelName = "com.s1xck.fmagnit/mock_location"
     private val overlayChannelName = "com.s1xck.fmagnit/overlay"
@@ -53,6 +64,7 @@ class MapsActivity : FlutterActivity() {
     private var isMockRunning = false
 
     private var pointBroadcastReceiver: BroadcastReceiver? = null
+    private var overlayChannel: MethodChannel? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -97,49 +109,53 @@ class MapsActivity : FlutterActivity() {
                             ))
                         }
                     }
+                    "getLastOrderTarget" -> {
+                        result.success(OrderTargetStore.loadLast(this))
+                    }
                     else -> result.notImplemented()
                 }
             }
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, overlayChannelName)
-            .setMethodCallHandler { call, result ->
-                when (call.method) {
-                    "hasOverlayPermission" -> result.success(Settings.canDrawOverlays(this))
-                    "requestOverlayPermission" -> { requestOverlayPermission(); result.success(null) }
-                    "hasAccessibilityPermission" -> result.success(isAccessibilityServiceEnabled())
-                    "openAccessibilitySettings" -> { openAccessibilitySettings(); result.success(null) }
-                    "hasUsageAccess" -> result.success(ForegroundDetector.hasUsageAccess(this))
-                    "openUsageAccessSettings" -> { openUsageAccessSettings(); result.success(null) }
-                    "getForegroundPackage" -> result.success(ForegroundDetector.getForegroundPackage(this))
-                    "startOverlay" -> { startOverlayService(); result.success(true) }
-                    "stopOverlay" -> { stopOverlayService(); result.success(true) }
-                    "isOverlayRunning" -> result.success(OverlayBridge.isOverlayServiceRunning)
-                    "updatePoints" -> {
-                        val json = call.argument<String>("pointsJson") ?: "[]"
-                        val activeId = call.argument<String>("activeId")
-                        updateOverlayPoints(json, activeId)
-                        result.success(true)
-                    }
-                    "clearOrderTarget" -> {
-                        clearOrderTarget()
-                        result.success(true)
-                    }
-                    else -> result.notImplemented()
+        overlayChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            overlayChannelName
+        )
+        overlayChannel?.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "hasOverlayPermission" -> result.success(Settings.canDrawOverlays(this))
+                "requestOverlayPermission" -> { requestOverlayPermission(); result.success(null) }
+                "hasAccessibilityPermission" -> result.success(isAccessibilityServiceEnabled())
+                "openAccessibilitySettings" -> { openAccessibilitySettings(); result.success(null) }
+                "hasUsageAccess" -> result.success(ForegroundDetector.hasUsageAccess(this))
+                "openUsageAccessSettings" -> { openUsageAccessSettings(); result.success(null) }
+                "getForegroundPackage" -> result.success(ForegroundDetector.getForegroundPackage(this))
+                "startOverlay" -> { startOverlayService(); result.success(true) }
+                "stopOverlay" -> { stopOverlayService(); result.success(true) }
+                "isOverlayRunning" -> result.success(OverlayBridge.isOverlayServiceRunning)
+                "updatePoints" -> {
+                    val json = call.argument<String>("pointsJson") ?: "[]"
+                    val activeId = call.argument<String>("activeId")
+                    updateOverlayPoints(json, activeId)
+                    result.success(true)
                 }
+                "clearOrderTarget" -> {
+                    clearOrderTarget()
+                    result.success(true)
+                }
+                else -> result.notImplemented()
             }
+        }
 
         pointBroadcastReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 when (intent?.action) {
                     ACTION_POINT_START -> {
                         val id = intent.getStringExtra("id")
-                        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, overlayChannelName)
-                            .invokeMethod("onOverlayStart", mapOf("id" to id))
+                        overlayChannel?.invokeMethod("onOverlayStart", mapOf("id" to id))
                     }
                     ACTION_POINT_STOP -> {
                         forceResetMock()
-                        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, overlayChannelName)
-                            .invokeMethod("onOverlayStop", null)
+                        overlayChannel?.invokeMethod("onOverlayStop", null)
                     }
                 }
             }
@@ -164,27 +180,114 @@ class MapsActivity : FlutterActivity() {
         handleIncomingIntent(intent)
     }
 
+    /**
+     * Обрабатывает интент из Магнита. Показывает Toast + уведомление,
+     * сохраняет координаты, шлёт broadcast в оверлей, закрывает активити.
+     */
     private fun handleIncomingIntent(intent: Intent?) {
-        val data: Uri = intent?.data ?: return
-        val parsed = parseCoordinates(data) ?: return
+        val action = intent?.action
+        val data: Uri? = intent?.data
+
+        Log.d(TAG, "===== Incoming intent =====")
+        Log.d(TAG, "action=$action")
+        Log.d(TAG, "data=$data")
+        Log.d(TAG, "extras=${intent?.extras}")
+
+        if (data == null) {
+            Log.d(TAG, "data == null, not an external launch — skipping")
+            return
+        }
+
+        val parsed = parseCoordinates(data)
+        if (parsed == null) {
+            Log.w(TAG, "Failed to parse coordinates from $data")
+            showToast("fmagnit: не удалось распарсить координаты")
+            showNotification(
+                "fmagnit: координаты не распознаны",
+                data.toString()
+            )
+            finish()
+            return
+        }
+
         val (lat, lon) = parsed
+        Log.d(TAG, "Parsed coordinates: lat=$lat, lon=$lon")
 
-        OrderTargetStore.save(applicationContext, lat, lon)
+        // 1. Сохраняем с timestamp и источником
+        OrderTargetStore.save(applicationContext, lat, lon, data.toString())
 
+        // 2. Показываем Toast — визуальное подтверждение
+        showToast("fmagnit получил: %.6f, %.6f".format(lat, lon))
+
+        // 3. Показываем системное уведомление
+        showNotification(
+            "fmagnit получил заказ",
+            "%.6f, %.6f".format(lat, lon)
+        )
+
+        // 4. Если оверлей работает — шлём ему координаты
         if (OverlayBridge.isOverlayServiceRunning) {
             val svc = Intent(this, OverlayService::class.java).apply {
                 action = OverlayService.ACTION_ORDER_TARGET
                 putExtra(OverlayService.EXTRA_ORDER_LAT, lat)
                 putExtra(OverlayService.EXTRA_ORDER_LON, lon)
             }
-            startService(svc)
+            try { startService(svc) } catch (_: Exception) {}
         }
 
+        // 5. Уведомляем Dart — на случай, если UI открыт
         val bcast = Intent(ACTION_ORDER_TARGET_UPDATED)
         bcast.setPackage(packageName)
         bcast.putExtra("lat", lat)
         bcast.putExtra("lon", lon)
         sendBroadcast(bcast)
+
+        // 6. Закрываем себя, возвращаем пользователя в Магнит
+        // Небольшая задержка, чтобы Toast успел появиться
+        handler?.postDelayed({ finish() }, 800)
+    }
+
+    private fun showToast(msg: String) {
+        try {
+            Toast.makeText(applicationContext, msg, Toast.LENGTH_LONG).show()
+        } catch (_: Exception) {}
+    }
+
+    private fun showNotification(title: String, text: String) {
+        try {
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                if (nm.getNotificationChannel(NOTIF_CHANNEL) == null) {
+                    val ch = NotificationChannel(
+                        NOTIF_CHANNEL, "fmagnit intent debug",
+                        NotificationManager.IMPORTANCE_DEFAULT
+                    )
+                    nm.createNotificationChannel(ch)
+                }
+            }
+
+            val openIntent = Intent(this, MapsActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            val piFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            else PendingIntent.FLAG_UPDATE_CURRENT
+            val pi = PendingIntent.getActivity(this, 0, openIntent, piFlags)
+
+            val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                android.app.Notification.Builder(this, NOTIF_CHANNEL)
+            else @Suppress("DEPRECATION") android.app.Notification.Builder(this)
+
+            val notif = builder
+                .setContentTitle(title)
+                .setContentText(text)
+                .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+                .setContentIntent(pi)
+                .setAutoCancel(true)
+                .build()
+
+            nm.notify(NOTIF_ID, notif)
+        } catch (_: Exception) {}
     }
 
     private fun parseCoordinates(uri: Uri): Pair<Double, Double>? {
