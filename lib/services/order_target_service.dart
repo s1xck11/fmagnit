@@ -1,18 +1,40 @@
 import 'package:flutter/services.dart';
 
-class OrderTarget {
-  final double latitude;
-  final double longitude;
+class OrderTargetInfo {
+  final double? latitude;
+  final double? longitude;
+  final int timestamp; // epoch ms
+  final String? sourceUri;
 
-  OrderTarget({required this.latitude, required this.longitude});
+  OrderTargetInfo({
+    required this.latitude,
+    required this.longitude,
+    required this.timestamp,
+    required this.sourceUri,
+  });
+
+  DateTime get receivedAt =>
+      DateTime.fromMillisecondsSinceEpoch(timestamp);
+
+  bool get hasData => latitude != null && longitude != null && timestamp > 0;
+
+  factory OrderTargetInfo.fromMap(Map<dynamic, dynamic> m) {
+    return OrderTargetInfo(
+      latitude: (m['latitude'] as num?)?.toDouble(),
+      longitude: (m['longitude'] as num?)?.toDouble(),
+      timestamp: (m['timestamp'] as num?)?.toInt() ?? 0,
+      sourceUri: m['sourceUri'] as String?,
+    );
+  }
 }
 
 class OrderTargetService {
   static const MethodChannel _channel =
-      MethodChannel('com.s1xck.fmagnit/overlay');
+      MethodChannel('com.s1xck.fmagnit/mock_location');
 
-  /// Очистить координаты заказа, полученные из приложения доставки.
-  Future<void> clearOrderTarget() async {
-    await _channel.invokeMethod('clearOrderTarget');
+  Future<OrderTargetInfo?> getLast() async {
+    final raw = await _channel.invokeMethod('getLastOrderTarget');
+    if (raw == null) return null;
+    return OrderTargetInfo.fromMap(raw as Map<dynamic, dynamic>);
   }
 }
