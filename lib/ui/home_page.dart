@@ -6,8 +6,8 @@ import 'package:flutter/material.dart';
 import '../main.dart';
 import '../models/waypoint.dart';
 import '../services/mock_location_service.dart';
+import '../services/order_target_service.dart';
 import '../services/overlay_service.dart';
-import '../services/service_health.dart';
 import '../storage/waypoint_storage.dart';
 import 'address_search_dialog.dart';
 import 'health_page.dart';
@@ -26,6 +26,7 @@ class _HomePageState extends State<HomePage> {
   final _storage = WaypointStorage();
   final _overlay = OverlayService();
   final _mock = MockLocationService();
+  final _orderTarget = OrderTargetService();
 
   List<Waypoint> _waypoints = [];
   bool _loading = true;
@@ -35,6 +36,8 @@ class _HomePageState extends State<HomePage> {
   bool _accessPerm = false;
   bool _usagePerm = false;
   String? _activeId;
+
+  OrderTargetInfo? _lastOrderTarget;
 
   SortMode _sortMode = SortMode.byDate;
   final Set<String> _collapsedGroups = {};
@@ -46,9 +49,9 @@ class _HomePageState extends State<HomePage> {
     super.initState();
     _load();
     _refreshPermissions();
+    _refreshOrderTarget();
     _overlay.setStartHandler(_onOverlayStartRequested);
 
-    // Автосброс mock — на случай, если остался от прошлой сессии
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _mock.forceResetMock();
     });
@@ -76,7 +79,26 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  Future<void> _refreshOrderTarget() async {
+    final last = await _orderTarget.getLast();
+    if (!mounted) return;
+    setState(() => _lastOrderTarget = last);
+  }
+
   Future<void> _onOverlayStartRequested(String id) async {
+    // Если это заказ клиента из Магнита — стартуем mock на его координатах
+    if (id == '__order__') {
+      final last = await _orderTarget.getLast();
+      if (last != null && last.hasData) {
+        await _mock.startMock(
+          latitude: last.latitude!,
+          longitude: last.longitude!,
+          accuracy: 5.0,
+        );
+      }
+      return;
+    }
+
     final w = _waypoints.firstWhere(
       (e) => e.id == id,
       orElse: () => _waypoints.first,
@@ -109,6 +131,7 @@ class _HomePageState extends State<HomePage> {
       _accessPerm = ac;
       _usagePerm = us;
     });
+    await _refreshOrderTarget();
   }
 
   Future<void> _pushPointsToOverlay() async {
@@ -542,6 +565,66 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Widget _orderTargetBanner() {
+    final t = _lastOrderTarget;
+    if (t == null || !t.hasData) return const SizedBox.shrink();
+
+    final lat = t.latitude!.toStringAsFixed(6);
+    final lon = t.longitude!.toStringAsFixed(6);
+    final dt = t.receivedAt;
+    final time =
+        '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}:${dt.second.toString().padLeft(2, '0')}';
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: FMagnitTheme.card,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: FMagnitTheme.accent),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.check_circle, color: FMagnitTheme.accent),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Последний перехват из Магнита',
+                    style: TextStyle(
+                      color: FMagnitTheme.textPrimary,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '$lat, $lon   •   $time',
+                    style: const TextStyle(
+                      color: FMagnitTheme.textMuted,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              tooltip: 'Очистить',
+              icon: const Icon(Icons.close, color: FMagnitTheme.textMuted),
+              onPressed: () async {
+                await _overlay.clearOrderTarget();
+                await _refreshOrderTarget();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -578,6 +661,9 @@ class _HomePageState extends State<HomePage> {
                 case 'export':
                   _exportPoints();
                   break;
+                case 'refresh_target':
+                  _refreshOrderTarget();
+                  break;
               }
             },
             itemBuilder: (_) => const [
@@ -592,6 +678,16 @@ class _HomePageState extends State<HomePage> {
                 ),
               ),
               PopupMenuDivider(),
+              PopupMenuItem(
+                value: 'refresh_target',
+                child: Row(
+                  children: [
+                    Icon(Icons.refresh, size: 20),
+                    SizedBox(width: 12),
+                    Text('Обновить перехват'),
+                  ],
+                ),
+              ),
               PopupMenuItem(
                 value: 'import',
                 child: Row(
@@ -705,6 +801,7 @@ class _HomePageState extends State<HomePage> {
                   ),
                 ),
                 _healthBanner(),
+                _orderTargetBanner(),
                 Expanded(
                   child: _waypoints.isEmpty
                       ? const Center(
