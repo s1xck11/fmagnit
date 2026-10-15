@@ -62,7 +62,6 @@ class OverlayService : Service() {
         const val EXTRA_ORDER_LAT = "order_lat"
         const val EXTRA_ORDER_LON = "order_lon"
 
-        // Лимит кэша тайлов — 100 МБ
         private const val TILE_CACHE_BYTES = 100L * 1024L * 1024L
 
         @Volatile var currentPointsJson: String = "[]"
@@ -85,7 +84,6 @@ class OverlayService : Service() {
 
     private var orderContainer: LinearLayout? = null
 
-    // Единственная карта, переиспользуется для мини и полного вида
     private var mapView: MapView? = null
 
     private var fullMapView: View? = null
@@ -97,9 +95,7 @@ class OverlayService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-
         initOsmdroid()
-
         acquireWakeLock()
 
         currentPointsJson = OverlayPrefs.loadPoints(this)
@@ -123,22 +119,17 @@ class OverlayService : Service() {
         try {
             val cfg = Configuration.getInstance()
             cfg.userAgentValue = packageName
-
             val base = File(cacheDir, "osmdroid")
             if (!base.exists()) base.mkdirs()
             cfg.osmdroidBasePath = base
-
             val tiles = File(base, "tiles")
             if (!tiles.exists()) tiles.mkdirs()
             cfg.osmdroidTileCache = tiles
-
-            // Увеличиваем лимит кэша
             try {
                 cfg.tileFileSystemCacheMaxBytes = TILE_CACHE_BYTES
                 cfg.tileFileSystemCacheTrimBytes = TILE_CACHE_BYTES / 2
             } catch (_: Throwable) {}
-        } catch (_: Exception) {
-        }
+        } catch (_: Exception) {}
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -188,9 +179,7 @@ class OverlayService : Service() {
     }
 
     private fun detachMap() {
-        try {
-            (mapView?.parent as? ViewGroup)?.removeView(mapView)
-        } catch (_: Exception) {}
+        try { (mapView?.parent as? ViewGroup)?.removeView(mapView) } catch (_: Exception) {}
         try { mapView?.onDetach() } catch (_: Exception) {}
         mapView = null
     }
@@ -204,15 +193,11 @@ class OverlayService : Service() {
             )
             wakeLock?.setReferenceCounted(false)
             wakeLock?.acquire()
-        } catch (_: Exception) {
-        }
+        } catch (_: Exception) {}
     }
 
     private fun releaseWakeLock() {
-        try {
-            if (wakeLock?.isHeld == true) wakeLock?.release()
-        } catch (_: Exception) {
-        }
+        try { if (wakeLock?.isHeld == true) wakeLock?.release() } catch (_: Exception) {}
         wakeLock = null
     }
 
@@ -417,19 +402,14 @@ class OverlayService : Service() {
         dotView?.setTextColor(if (isRunning) COLOR_DOT_ACTIVE else COLOR_DOT_IDLE)
     }
 
-    /**
-     * Создаёт (если надо) и настраивает единственный MapView.
-     * Неинтерактивный в мини-виде — тапы ловит прозрачный слой сверху.
-     */
     private fun ensureMap(): MapView {
         val existing = mapView
         if (existing != null) return existing
-
         val ctx = this
         val map = MapView(ctx)
         try {
             map.setTileSource(TileSourceFactory.MAPNIK)
-            map.setUseDataConnection(true) // карта сама берёт из кэша при отсутствии сети
+            map.setUseDataConnection(true)
             map.setMultiTouchControls(true)
             map.controller.setZoom(17.0)
             map.invalidate()
@@ -447,7 +427,6 @@ class OverlayService : Service() {
             marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
             marker.title = "Заказ"
             map.overlays.add(marker)
-
             map.controller.setCenter(GeoPoint(lat, lon))
             map.controller.setZoom(17.0)
             map.invalidate()
@@ -456,9 +435,7 @@ class OverlayService : Service() {
 
     private fun detachFromParent(view: View?) {
         if (view == null) return
-        try {
-            (view.parent as? ViewGroup)?.removeView(view)
-        } catch (_: Exception) {}
+        try { (view.parent as? ViewGroup)?.removeView(view) } catch (_: Exception) {}
     }
 
     private fun rebuildOrderBlock() {
@@ -499,10 +476,8 @@ class OverlayService : Service() {
             setPadding(0, 0, 0, dp(8))
         })
 
-        // Контейнер карты: MapView + прозрачный перехватчик тапов
         val mapWrapper = FrameLayout(ctx).apply {
             background = roundedBg(COLOR_INACTIVE, 12)
-            clipToPadding = false
         }
 
         val map = ensureMap()
@@ -512,13 +487,10 @@ class OverlayService : Service() {
             ViewGroup.LayoutParams.MATCH_PARENT
         ))
 
-        // Прозрачный слой СВЕРХУ карты — ловит тапы
         val tapLayer = View(ctx).apply {
             isClickable = true
             setBackgroundColor(0x00000000)
-            setOnClickListener {
-                openFullMap(lat, lon)
-            }
+            setOnClickListener { openFullMap(lat, lon) }
         }
         mapWrapper.addView(tapLayer, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
@@ -579,8 +551,6 @@ class OverlayService : Service() {
         c.addView(row)
     }
 
-    // ---------- Полноэкранная карта ----------
-
     private fun openFullMap(lat: Double, lon: Double) {
         if (fullMapView != null) return
 
@@ -593,8 +563,6 @@ class OverlayService : Service() {
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
         ))
-
-        // В полном виде MapView должен принимать тапы напрямую
         map.setMultiTouchControls(true)
         try {
             map.controller.setCenter(GeoPoint(lat, lon))
@@ -610,7 +578,7 @@ class OverlayService : Service() {
             setPadding(dp(14), dp(4), dp(14), dp(10))
             setOnClickListener {
                 closeFullMap()
-                rebuildContent() // вернёт карту в мини-вид
+                rebuildContent()
             }
         }
 
@@ -655,9 +623,7 @@ class OverlayService : Service() {
     }
 
     private fun closeFullMap() {
-        try {
-            fullMapView?.let { windowManager?.removeView(it) }
-        } catch (_: Exception) {}
+        try { fullMapView?.let { windowManager?.removeView(it) } } catch (_: Exception) {}
         fullMapView = null
         fullMapLayoutParams = null
     }
@@ -710,58 +676,42 @@ class OverlayService : Service() {
             }
         }
 
-        val buttonsRow = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(12), 0, dp(4))
-        }
-
-        val playBtn = TextView(ctx).apply {
-            text = if (isRunning) "ЗАПУЩЕНО" else "СТАРТ"
-            setTextColor(COLOR_TEXT)
+        // --- ОДНА КНОПКА-ТУМБЛЕР ---
+        val toggleBtn = TextView(ctx).apply {
+            text = if (isRunning) "СТОП" else "СТАРТ"
+            setTextColor(if (isRunning) COLOR_TEXT else COLOR_MUTED)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
             setTypeface(typeface, Typeface.BOLD)
             gravity = Gravity.CENTER
             setPadding(dp(16), dp(14), dp(16), dp(14))
-            background = roundedBg(COLOR_ACCENT, 14)
+            background = roundedBg(
+                if (isRunning) COLOR_ACCENT else COLOR_INACTIVE,
+                14
+            )
             setOnClickListener {
-                val id = currentActiveId
-                if (id != null) {
-                    isRunning = true
-                    OverlayPrefs.saveRunning(this@OverlayService, true)
-                    sendBroadcast(Intent(ACTION_POINT_START).apply {
-                        setPackage(packageName); putExtra("id", id)
-                    })
-                    rebuildContent()
+                if (isRunning) {
+                    isRunning = false
+                    OverlayPrefs.saveRunning(this@OverlayService, false)
+                    sendBroadcast(Intent(ACTION_POINT_STOP).apply { setPackage(packageName) })
+                } else {
+                    val id = currentActiveId
+                    if (id != null) {
+                        isRunning = true
+                        OverlayPrefs.saveRunning(this@OverlayService, true)
+                        sendBroadcast(Intent(ACTION_POINT_START).apply {
+                            setPackage(packageName); putExtra("id", id)
+                        })
+                    }
                 }
-            }
-            layoutParams = LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
-            ).also { it.rightMargin = dp(8) }
-        }
-
-        val stopBtn = TextView(ctx).apply {
-            text = "СТОП"
-            setTextColor(COLOR_TEXT)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-            setTypeface(typeface, Typeface.BOLD)
-            gravity = Gravity.CENTER
-            setPadding(dp(16), dp(14), dp(16), dp(14))
-            background = roundedBg(COLOR_INACTIVE, 14)
-            setOnClickListener {
-                isRunning = false
-                OverlayPrefs.saveRunning(this@OverlayService, false)
-                sendBroadcast(Intent(ACTION_POINT_STOP).apply { setPackage(packageName) })
                 rebuildContent()
             }
             layoutParams = LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
-            ).also { it.leftMargin = dp(8) }
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).also { it.topMargin = dp(12) }
         }
 
-        buttonsRow.addView(playBtn)
-        buttonsRow.addView(stopBtn)
-        container.addView(buttonsRow)
+        container.addView(toggleBtn)
     }
 
     private fun parsePoints(json: String): List<Pair<String, String>> {
