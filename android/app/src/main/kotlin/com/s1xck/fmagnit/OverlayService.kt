@@ -48,6 +48,7 @@ class OverlayService : Service() {
         const val ACTION_UPDATE_POINTS = "com.s1xck.fmagnit.OVERLAY_UPDATE_POINTS"
         const val ACTION_ORDER_TARGET = "com.s1xck.fmagnit.OVERLAY_ORDER_TARGET"
         const val ACTION_ORDER_TARGET_CLEAR = "com.s1xck.fmagnit.OVERLAY_ORDER_CLEAR"
+        const val ACTION_ORDER_START_MOCK = "com.s1xck.fmagnit.ORDER_START_MOCK"
 
         const val EXTRA_POINTS_JSON = "points_json"
         const val EXTRA_ACTIVE_ID = "active_id"
@@ -416,10 +417,15 @@ class OverlayService : Service() {
             setPadding(dp(14), dp(12), dp(14), dp(12))
             background = roundedBg(COLOR_ACCENT, 14)
             setOnClickListener {
-                OrderTargetStore.save(this@OverlayService, lat, lon)
-                sendBroadcast(Intent(ACTION_POINT_START).apply {
-                    setPackage(packageName); putExtra("id", "__order__")
-                })
+                // Отправляем broadcast, MapsActivity его ловит и напрямую запускает mock
+                val b = Intent(ACTION_ORDER_START_MOCK)
+                b.setPackage(packageName)
+                b.putExtra(EXTRA_ORDER_LAT, lat)
+                b.putExtra(EXTRA_ORDER_LON, lon)
+                sendBroadcast(b)
+                isRunning = true
+                OverlayPrefs.saveRunning(this@OverlayService, true)
+                rebuildContent()
             }
             layoutParams = LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
