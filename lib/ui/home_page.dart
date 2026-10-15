@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../main.dart';
 import '../models/waypoint.dart';
@@ -38,6 +39,7 @@ class _HomePageState extends State<HomePage> {
   String? _activeId;
 
   OrderTargetInfo? _lastOrderTarget;
+  CrashInfo? _lastCrash;
 
   SortMode _sortMode = SortMode.byDate;
   final Set<String> _collapsedGroups = {};
@@ -50,6 +52,7 @@ class _HomePageState extends State<HomePage> {
     _load();
     _refreshPermissions();
     _refreshOrderTarget();
+    _refreshCrashLog();
     _overlay.setStartHandler(_onOverlayStartRequested);
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -85,8 +88,13 @@ class _HomePageState extends State<HomePage> {
     setState(() => _lastOrderTarget = last);
   }
 
+  Future<void> _refreshCrashLog() async {
+    final c = await _orderTarget.getLastCrash();
+    if (!mounted) return;
+    setState(() => _lastCrash = c);
+  }
+
   Future<void> _onOverlayStartRequested(String id) async {
-    // Если это заказ клиента из Магнита — стартуем mock на его координатах
     if (id == '__order__') {
       final last = await _orderTarget.getLast();
       if (last != null && last.hasData) {
@@ -132,6 +140,7 @@ class _HomePageState extends State<HomePage> {
       _usagePerm = us;
     });
     await _refreshOrderTarget();
+    await _refreshCrashLog();
   }
 
   Future<void> _pushPointsToOverlay() async {
@@ -625,6 +634,75 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Widget _crashBanner() {
+    final c = _lastCrash;
+    if (c == null || c.log.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.red.shade900.withOpacity(0.4),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: FMagnitTheme.accent),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.bug_report, color: FMagnitTheme.accent),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Последний краш [${c.tag ?? "?"}]',
+                    style: const TextStyle(
+                      color: FMagnitTheme.textPrimary,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.copy, color: FMagnitTheme.textMuted),
+                  onPressed: () async {
+                    await Clipboard.setData(ClipboardData(text: c.log));
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Лог скопирован')),
+                      );
+                    }
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close, color: FMagnitTheme.textMuted),
+                  onPressed: () async {
+                    await _orderTarget.clearCrash();
+                    await _refreshCrashLog();
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 150,
+              child: SingleChildScrollView(
+                child: Text(
+                  c.log,
+                  style: const TextStyle(
+                    color: FMagnitTheme.textPrimary,
+                    fontSize: 10,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -655,14 +733,17 @@ class _HomePageState extends State<HomePage> {
                 case 'restore_gps':
                   _restoreGps();
                   break;
+                case 'refresh_target':
+                  _refreshOrderTarget();
+                  break;
+                case 'refresh_crash':
+                  _refreshCrashLog();
+                  break;
                 case 'import':
                   _importPoints();
                   break;
                 case 'export':
                   _exportPoints();
-                  break;
-                case 'refresh_target':
-                  _refreshOrderTarget();
                   break;
               }
             },
@@ -688,6 +769,17 @@ class _HomePageState extends State<HomePage> {
                   ],
                 ),
               ),
+              PopupMenuItem(
+                value: 'refresh_crash',
+                child: Row(
+                  children: [
+                    Icon(Icons.bug_report, size: 20),
+                    SizedBox(width: 12),
+                    Text('Обновить лог краша'),
+                  ],
+                ),
+              ),
+              PopupMenuDivider(),
               PopupMenuItem(
                 value: 'import',
                 child: Row(
@@ -802,6 +894,7 @@ class _HomePageState extends State<HomePage> {
                 ),
                 _healthBanner(),
                 _orderTargetBanner(),
+                _crashBanner(),
                 Expanded(
                   child: _waypoints.isEmpty
                       ? const Center(
