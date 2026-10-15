@@ -65,6 +65,18 @@ class OverlayService {
     await _channel.invokeMethod('clearOrderTarget');
   }
 
+  /// Тестовый заказ: устанавливает координаты заказа вручную
+  /// (без перехвата из Магнита). Оверлей раскроется автоматически.
+  Future<void> setManualOrderTarget({
+    required double latitude,
+    required double longitude,
+  }) async {
+    await _channel.invokeMethod('setManualOrderTarget', {
+      'latitude': latitude,
+      'longitude': longitude,
+    });
+  }
+
   void setStartHandler(Future<void> Function(String id) handler) {
     _channel.setMethodCallHandler((call) async {
       if (call.method == 'onOverlayStart') {
