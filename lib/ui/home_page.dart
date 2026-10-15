@@ -1168,4 +1168,42 @@ class _WaypointDialogState extends State<_WaypointDialog> {
             ),
             const SizedBox(height: 10),
             TextField(
-              controller:
+              controller: _latCtrl,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+                signed: true,
+              ),
+              decoration: const InputDecoration(labelText: 'Latitude'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _lonCtrl,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+                signed: true,
+              ),
+              decoration: const InputDecoration(labelText: 'Longitude'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _accCtrl,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(labelText: 'Accuracy (m)'),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          onPressed: _save,
+          child: const Text('Сохранить'),
+        ),
+      ],
+    );
+  }
+}
