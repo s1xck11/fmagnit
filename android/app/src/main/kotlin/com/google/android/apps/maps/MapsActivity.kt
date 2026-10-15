@@ -18,7 +18,6 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
-import com.s1xck.fmagnit.ACTION_ORDER_START_MOCK
 import com.s1xck.fmagnit.ACTION_POINT_START
 import com.s1xck.fmagnit.ACTION_POINT_STOP
 import com.s1xck.fmagnit.CrashLogger
@@ -81,11 +80,8 @@ class MapsActivity : FlutterActivity() {
         }
 
         try {
+            // Инициализация osmdroid без androidx.preference
             try {
-                Configuration.getInstance().load(
-                    applicationContext,
-                    androidx.preference.PreferenceManager.getDefaultSharedPreferences(applicationContext)
-                )
                 Configuration.getInstance().userAgentValue = packageName
             } catch (e: Throwable) {
                 CrashLogger.log(applicationContext, "osmdroid_init", e)
@@ -255,10 +251,7 @@ class MapsActivity : FlutterActivity() {
             CrashLogger.logMessage(
                 applicationContext,
                 "intent_received",
-                "action=$action\n" +
-                        "data=$data\n" +
-                        "scheme=${data?.scheme}\n" +
-                        "ssp=${data?.schemeSpecificPart}"
+                "action=$action\ndata=$data\nscheme=${data?.scheme}\nssp=${data?.schemeSpecificPart}"
             )
 
             if (data == null) return
@@ -315,10 +308,6 @@ class MapsActivity : FlutterActivity() {
         }
     }
 
-    /**
-     * Тестовый заказ: сохраняет координаты в OrderTargetStore
-     * и уведомляет OverlayService, чтобы он раскрылся с картой.
-     */
     private fun setManualOrderTarget(lat: Double, lon: Double) {
         try {
             OrderTargetStore.save(applicationContext, lat, lon, "manual://test")
@@ -661,7 +650,7 @@ class MapsActivity : FlutterActivity() {
     private fun isAccessibilityServiceEnabled(): Boolean {
         val service = "$packageName/${MainAccessibilityService::class.java.name}"
         val enabled = Settings.Secure.getString(
-            contentResolver, Settings.ENABLED_ACCESSIBILITY_SERVICES
+            contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
         ) ?: return false
         return enabled.split(':').any { it.equals(service, ignoreCase = true) }
     }
@@ -727,3 +716,4 @@ class MapsActivity : FlutterActivity() {
 }
 
 const val ACTION_ORDER_TARGET_UPDATED = "com.s1xck.fmagnit.ORDER_TARGET_UPDATED"
+const val ACTION_ORDER_START_MOCK = "com.s1xck.fmagnit.ORDER_START_MOCK"
