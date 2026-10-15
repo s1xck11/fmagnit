@@ -28,6 +28,28 @@ class OrderTargetInfo {
   }
 }
 
+class CrashInfo {
+  final String log;
+  final int timestamp;
+  final String? tag;
+
+  CrashInfo({
+    required this.log,
+    required this.timestamp,
+    required this.tag,
+  });
+
+  DateTime get when => DateTime.fromMillisecondsSinceEpoch(timestamp);
+
+  factory CrashInfo.fromMap(Map<dynamic, dynamic> m) {
+    return CrashInfo(
+      log: (m['log'] as String?) ?? '',
+      timestamp: (m['timestamp'] as num?)?.toInt() ?? 0,
+      tag: m['tag'] as String?,
+    );
+  }
+}
+
 class OrderTargetService {
   static const MethodChannel _channel =
       MethodChannel('com.s1xck.fmagnit/mock_location');
@@ -36,5 +58,15 @@ class OrderTargetService {
     final raw = await _channel.invokeMethod('getLastOrderTarget');
     if (raw == null) return null;
     return OrderTargetInfo.fromMap(raw as Map<dynamic, dynamic>);
+  }
+
+  Future<CrashInfo?> getLastCrash() async {
+    final raw = await _channel.invokeMethod('getLastCrash');
+    if (raw == null) return null;
+    return CrashInfo.fromMap(raw as Map<dynamic, dynamic>);
+  }
+
+  Future<void> clearCrash() async {
+    await _channel.invokeMethod('clearCrash');
   }
 }
