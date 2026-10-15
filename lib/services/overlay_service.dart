@@ -22,7 +22,6 @@ class OverlayService {
     await _channel.invokeMethod('openAccessibilitySettings');
   }
 
-  /// Usage Access — «Использование данных», нужно для UsageStatsManager.
   Future<bool> hasUsageAccess() async {
     final r = await _channel.invokeMethod<bool>('hasUsageAccess');
     return r ?? false;
@@ -32,7 +31,6 @@ class OverlayService {
     await _channel.invokeMethod('openUsageAccessSettings');
   }
 
-  /// Текущий пакет на переднем плане (для отладки).
   Future<String?> getForegroundPackage() async {
     return await _channel.invokeMethod<String>('getForegroundPackage');
   }
@@ -60,6 +58,11 @@ class OverlayService {
       'pointsJson': pointsJson,
       'activeId': activeId,
     });
+  }
+
+  /// Очищает координаты заказа, полученные из приложения доставки.
+  Future<void> clearOrderTarget() async {
+    await _channel.invokeMethod('clearOrderTarget');
   }
 
   void setStartHandler(Future<void> Function(String id) handler) {
