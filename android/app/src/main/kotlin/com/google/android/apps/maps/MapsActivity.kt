@@ -71,11 +71,6 @@ class MapsActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         try {
             super.configureFlutterEngine(flutterEngine)
-            CrashLogger.logMessage(
-                applicationContext,
-                "configureFlutterEngine",
-                "configureFlutterEngine started"
-            )
         } catch (e: Throwable) {
             CrashLogger.log(applicationContext, "configureFlutterEngine", e)
             throw e
@@ -233,10 +228,22 @@ class MapsActivity : FlutterActivity() {
             Log.d(TAG, "action=$action")
             Log.d(TAG, "data=$data")
 
+            // ПОДРОБНАЯ ДИАГНОСТИКА — записываем ВСЁ, что даёт Uri
             CrashLogger.logMessage(
                 applicationContext,
-                "handleIncomingIntent",
-                "action=$action\ndata=$data"
+                "intent_received",
+                "action=$action\n" +
+                        "data=$data\n" +
+                        "scheme=${data?.scheme}\n" +
+                        "ssp=${data?.schemeSpecificPart}\n" +
+                        "host=${data?.host}\n" +
+                        "path=${data?.path}\n" +
+                        "query=${data?.query}\n" +
+                        "fragment=${data?.fragment}\n" +
+                        "isOpaque=${data?.isOpaque}\n" +
+                        "isHierarchical=${data?.isHierarchical}\n" +
+                        "isAbsolute=${data?.isAbsolute}\n" +
+                        "toString=${data?.toString()}"
             )
 
             if (data == null) {
@@ -250,7 +257,12 @@ class MapsActivity : FlutterActivity() {
                 CrashLogger.logMessage(
                     applicationContext,
                     "parse_failed",
-                    "Could not parse: $data\nscheme=${data.scheme}\nssp=${data.schemeSpecificPart}\nhost=${data.host}\npath=${data.path}\nquery=${data.query}"
+                    "Could not parse: $data\n" +
+                            "scheme=${data.scheme}\n" +
+                            "ssp=${data.schemeSpecificPart}\n" +
+                            "host=${data.host}\n" +
+                            "path=${data.path}\n" +
+                            "query=${data.query}"
                 )
                 showToast("fmagnit: не удалось распарсить координаты")
                 showNotification(
@@ -347,22 +359,16 @@ class MapsActivity : FlutterActivity() {
         } catch (_: Exception) {}
     }
 
-    /**
-     * Безопасный парсер URI. Больше не использует getQueryParameter
-     * для opaque-схем (google.navigation:, geo:).
-     */
     private fun parseCoordinates(uri: Uri): Pair<Double, Double>? {
         val scheme = uri.scheme ?: return null
 
         when (scheme.lowercase()) {
             "google.navigation" -> {
-                // Формат: google.navigation:q=55.75,37.61 или google.navigation:q=55.75,37.61&mode=d
                 val ssp = uri.schemeSpecificPart ?: return null
                 val q = extractParam(ssp, "q") ?: ssp
                 return parseLatLonString(q)
             }
             "geo" -> {
-                // Формат: geo:55.75,37.61 или geo:55.75,37.61?q=55.75,37.61 или geo:0,0?q=55.75,37.61
                 val ssp = uri.schemeSpecificPart ?: return null
                 val coordsPart = ssp.substringBefore("?")
                 parseLatLonString(coordsPart)?.let { return it }
@@ -371,7 +377,6 @@ class MapsActivity : FlutterActivity() {
                 return null
             }
             "https", "http" -> {
-                // Иерархический URI — можно getQueryParameter
                 try {
                     uri.getQueryParameter("destination")?.let {
                         parseLatLonString(it)?.let { r -> return r }
@@ -387,7 +392,6 @@ class MapsActivity : FlutterActivity() {
                     }
                 } catch (_: Exception) {}
 
-                // Иногда координаты лежат прямо в пути: /maps/@55.75,37.61,15z
                 val path = uri.path ?: return null
                 val atIdx = path.indexOf('@')
                 if (atIdx >= 0) {
@@ -401,10 +405,6 @@ class MapsActivity : FlutterActivity() {
         }
     }
 
-    /**
-     * Извлекает параметр из строки вида "q=55.75,37.61&mode=d"
-     * (без использования Uri.getQueryParameter — она падает на opaque URI).
-     */
     private fun extractParam(ssp: String, key: String): String? {
         try {
             val qIdx = ssp.indexOf('?')
