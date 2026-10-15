@@ -13,7 +13,6 @@ import '../storage/waypoint_storage.dart';
 import 'address_search_dialog.dart';
 import 'health_page.dart';
 import 'import_export_dialogs.dart';
-import 'mock_test_panel.dart';
 import 'sort_menu.dart';
 
 class HomePage extends StatefulWidget {
@@ -23,7 +22,7 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final _storage = WaypointStorage();
   final _overlay = OverlayService();
   final _mock = MockLocationService();
@@ -49,6 +48,7 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _load();
     _refreshPermissions();
     _refreshOrderTarget();
@@ -59,15 +59,25 @@ class _HomePageState extends State<HomePage> {
       await _mock.forceResetMock();
     });
 
-    _stateTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+    _stateTimer = Timer.periodic(const Duration(seconds: 2), (_) {
       _pollOverlayState();
     });
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _stateTimer?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _refreshPermissions();
+      _refreshOrderTarget();
+      _refreshCrashLog();
+    }
   }
 
   Future<void> _pollOverlayState() async {
@@ -139,8 +149,6 @@ class _HomePageState extends State<HomePage> {
       _accessPerm = ac;
       _usagePerm = us;
     });
-    await _refreshOrderTarget();
-    await _refreshCrashLog();
   }
 
   Future<void> _pushPointsToOverlay() async {
@@ -158,6 +166,10 @@ class _HomePageState extends State<HomePage> {
     }
     if (!_usagePerm) {
       await _overlay.openUsageAccessSettings();
+      return;
+    }
+    if (!_accessPerm) {
+      await _overlay.openAccessibilitySettings();
       return;
     }
     if (_overlayRunning) {
@@ -186,7 +198,6 @@ class _HomePageState extends State<HomePage> {
         : 'Не удалось сбросить mock. Попробуй перезагрузить телефон.');
   }
 
-  /// Тестовый заказ — выбираем точку из сохранённых, она становится «заказом».
   Future<void> _testOrder() async {
     if (_waypoints.isEmpty) {
       _snack('Сначала добавь хотя бы одну точку');
@@ -209,6 +220,56 @@ class _HomePageState extends State<HomePage> {
 
     if (!mounted) return;
     _snack('Тестовый заказ: ${selected.name}');
+  }
+
+  Future<void> _showAddSheet() async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 16),
+              child: Text(
+                'Добавить точку',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                  color: FMagnitTheme.textPrimary,
+                ),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.my_location,
+                  color: FMagnitTheme.accent),
+              title: const Text('Сохранить мою позицию'),
+              onTap: () => Navigator.of(context).pop('current'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.edit_location_alt,
+                  color: FMagnitTheme.accent),
+              title: const Text('Ввести координаты вручную'),
+              onTap: () => Navigator.of(context).pop('manual'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.search, color: FMagnitTheme.accent),
+              title: const Text('Найти по адресу'),
+              onTap: () => Navigator.of(context).pop('search'),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+
+    if (action == 'current') {
+      await _addCurrentLocation();
+    } else if (action == 'manual') {
+      await _addWaypoint();
+    } else if (action == 'search') {
+      await _searchByAddress();
+    }
   }
 
   Future<void> _addWaypoint() async {
@@ -413,46 +474,36 @@ class _HomePageState extends State<HomePage> {
           color: FMagnitTheme.card,
           borderRadius: BorderRadius.circular(16),
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              title: Text(
-                w.name,
-                style: const TextStyle(
-                  color: FMagnitTheme.textPrimary,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 15,
-                ),
-              ),
-              subtitle: Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text(
-                  '${w.latitude.toStringAsFixed(6)}, '
-                  '${w.longitude.toStringAsFixed(6)}'
-                  '${w.group.isNotEmpty ? '  •  ${w.group}' : ''}',
-                  style: const TextStyle(
-                    color: FMagnitTheme.textMuted,
-                    fontSize: 12,
-                  ),
-                ),
-              ),
-              onTap: () => _editWaypoint(w),
-              trailing: IconButton(
-                icon: const Icon(Icons.delete_outline,
-                    color: FMagnitTheme.textMuted),
-                onPressed: () => _deleteWaypoint(w),
+        child: ListTile(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: Text(
+            w.name,
+            style: const TextStyle(
+              color: FMagnitTheme.textPrimary,
+              fontWeight: FontWeight.w600,
+              fontSize: 15,
+            ),
+          ),
+          subtitle: Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              '${w.latitude.toStringAsFixed(6)}, '
+              '${w.longitude.toStringAsFixed(6)}'
+              '${w.group.isNotEmpty ? '  •  ${w.group}' : ''}',
+              style: const TextStyle(
+                color: FMagnitTheme.textMuted,
+                fontSize: 12,
               ),
             ),
-            MockTestPanel(
-              label: w.name,
-              latitude: w.latitude,
-              longitude: w.longitude,
-            ),
-          ],
+          ),
+          onTap: () => _editWaypoint(w),
+          trailing: IconButton(
+            icon: const Icon(Icons.delete_outline,
+                color: FMagnitTheme.textMuted),
+            onPressed: () => _deleteWaypoint(w),
+          ),
         ),
       ),
     );
@@ -527,73 +578,57 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _statusChip(String label, bool ok) {
+  Widget _statusDot(bool ok) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      width: 8,
+      height: 8,
       decoration: BoxDecoration(
-        color: ok
-            ? FMagnitTheme.success.withOpacity(0.15)
-            : FMagnitTheme.accent.withOpacity(0.15),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: ok ? FMagnitTheme.success : FMagnitTheme.accent,
-          width: 1,
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            ok ? Icons.check_circle : Icons.error_outline,
-            size: 14,
-            color: ok ? FMagnitTheme.success : FMagnitTheme.accent,
-          ),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: TextStyle(
-              color: ok ? FMagnitTheme.success : FMagnitTheme.accent,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
+        color: ok ? FMagnitTheme.success : FMagnitTheme.accent,
+        shape: BoxShape.circle,
       ),
     );
   }
 
-  Widget _healthBanner() {
-    if (_accessPerm || !_overlayPerm) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: _openHealth,
-        child: Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: FMagnitTheme.accent.withOpacity(0.12),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: FMagnitTheme.accent),
-          ),
-          child: Row(
-            children: [
-              const Icon(Icons.warning_amber_rounded,
-                  color: FMagnitTheme.accent),
-              const SizedBox(width: 10),
-              const Expanded(
-                child: Text(
-                  'Accessibility выключен. Сервис может работать нестабильно. '
-                  'Нажми, чтобы узнать, как починить.',
-                  style: TextStyle(
-                    color: FMagnitTheme.textPrimary,
-                    fontSize: 13,
-                  ),
-                ),
+  Widget _statusRow() {
+    final ok = _overlayPerm && _usagePerm && _accessPerm;
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: _openHealth,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          children: [
+            _statusDot(_overlayPerm),
+            const SizedBox(width: 6),
+            const Text('Overlay',
+                style: TextStyle(
+                    color: FMagnitTheme.textMuted, fontSize: 11)),
+            const SizedBox(width: 12),
+            _statusDot(_usagePerm),
+            const SizedBox(width: 6),
+            const Text('Usage',
+                style: TextStyle(
+                    color: FMagnitTheme.textMuted, fontSize: 11)),
+            const SizedBox(width: 12),
+            _statusDot(_accessPerm),
+            const SizedBox(width: 6),
+            const Text('Accessibility',
+                style: TextStyle(
+                    color: FMagnitTheme.textMuted, fontSize: 11)),
+            const Spacer(),
+            Text(
+              ok ? 'OK' : 'Нажми сюда',
+              style: TextStyle(
+                color: ok
+                    ? FMagnitTheme.success
+                    : FMagnitTheme.accent,
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
               ),
-              const Icon(Icons.chevron_right, color: FMagnitTheme.textMuted),
-            ],
-          ),
+            ),
+            const Icon(Icons.chevron_right,
+                color: FMagnitTheme.textMuted, size: 16),
+          ],
         ),
       ),
     );
@@ -610,7 +645,7 @@ class _HomePageState extends State<HomePage> {
         '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}:${dt.second.toString().padLeft(2, '0')}';
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
       child: Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
@@ -627,7 +662,7 @@ class _HomePageState extends State<HomePage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    'Последний перехват из Магнита',
+                    'Последний перехват',
                     style: TextStyle(
                       color: FMagnitTheme.textPrimary,
                       fontWeight: FontWeight.bold,
@@ -663,7 +698,7 @@ class _HomePageState extends State<HomePage> {
     final c = _lastCrash;
     if (c == null || c.log.isEmpty) return const SizedBox.shrink();
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
       child: Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
@@ -680,7 +715,7 @@ class _HomePageState extends State<HomePage> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Последний краш [${c.tag ?? "?"}]',
+                    'Краш [${c.tag ?? "?"}]',
                     style: const TextStyle(
                       color: FMagnitTheme.textPrimary,
                       fontWeight: FontWeight.bold,
@@ -710,7 +745,7 @@ class _HomePageState extends State<HomePage> {
             ),
             const SizedBox(height: 8),
             SizedBox(
-              height: 150,
+              height: 120,
               child: SingleChildScrollView(
                 child: Text(
                   c.log,
@@ -736,11 +771,6 @@ class _HomePageState extends State<HomePage> {
         title: const Text('fmagnit'),
         actions: [
           IconButton(
-            onPressed: _openHealth,
-            icon: const Icon(Icons.health_and_safety),
-            tooltip: 'Здоровье сервисов',
-          ),
-          IconButton(
             onPressed: _chooseSort,
             icon: Icon(_sortMode.icon),
             tooltip: 'Сортировка: ${_sortMode.label}',
@@ -755,17 +785,20 @@ class _HomePageState extends State<HomePage> {
             tooltip: 'Ещё',
             onSelected: (v) {
               switch (v) {
-                case 'restore_gps':
-                  _restoreGps();
-                  break;
                 case 'test_order':
                   _testOrder();
+                  break;
+                case 'restore_gps':
+                  _restoreGps();
                   break;
                 case 'refresh_target':
                   _refreshOrderTarget();
                   break;
                 case 'refresh_crash':
                   _refreshCrashLog();
+                  break;
+                case 'settings':
+                  _openHealth();
                   break;
                 case 'import':
                   _importPoints();
@@ -819,6 +852,17 @@ class _HomePageState extends State<HomePage> {
               ),
               PopupMenuDivider(),
               PopupMenuItem(
+                value: 'settings',
+                child: Row(
+                  children: [
+                    Icon(Icons.health_and_safety, size: 20),
+                    SizedBox(width: 12),
+                    Text('Настройки сервисов'),
+                  ],
+                ),
+              ),
+              PopupMenuDivider(),
+              PopupMenuItem(
                 value: 'import',
                 child: Row(
                   children: [
@@ -848,6 +892,7 @@ class _HomePageState extends State<HomePage> {
             )
           : Column(
               children: [
+                // --- Секция Управление ---
                 Padding(
                   padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
                   child: Container(
@@ -855,89 +900,72 @@ class _HomePageState extends State<HomePage> {
                       color: FMagnitTheme.card,
                       borderRadius: BorderRadius.circular(16),
                     ),
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(14),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          'Оверлей поверх Магнит.Доставка',
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold,
-                            color: FMagnitTheme.textPrimary,
+                        FilledButton.icon(
+                          onPressed: _toggleOverlay,
+                          style: FilledButton.styleFrom(
+                            backgroundColor: _overlayRunning
+                                ? FMagnitTheme.accent
+                                : FMagnitTheme.inactive,
+                            foregroundColor: _overlayRunning
+                                ? Colors.white
+                                : FMagnitTheme.textMuted,
+                            minimumSize: const Size.fromHeight(52),
+                          ),
+                          icon: Icon(
+                            _overlayRunning ? Icons.stop : Icons.play_arrow,
+                            size: 22,
+                          ),
+                          label: Text(
+                            _overlayRunning
+                                ? 'Остановить оверлей'
+                                : 'Запустить оверлей',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
-                        const SizedBox(height: 10),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            _statusChip('Overlay', _overlayPerm),
-                            _statusChip('Usage Access', _usagePerm),
-                            _statusChip('Accessibility', _accessPerm),
-                            _statusChip('Сервис', _overlayRunning),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            OutlinedButton.icon(
-                              onPressed: () async {
-                                await _overlay.openUsageAccessSettings();
-                              },
-                              icon: const Icon(Icons.insights, size: 18),
-                              label: const Text('Usage Access'),
-                            ),
-                            OutlinedButton.icon(
-                              onPressed: () async {
-                                await _overlay.openAccessibilitySettings();
-                              },
-                              icon: const Icon(Icons.accessibility, size: 18),
-                              label: const Text('Accessibility'),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: FilledButton.icon(
-                                onPressed: _toggleOverlay,
-                                icon: Icon(
-                                  _overlayRunning
-                                      ? Icons.stop
-                                      : Icons.play_arrow,
-                                  size: 20,
-                                ),
-                                label: Text(
-                                  _overlayRunning
-                                      ? 'Остановить оверлей'
-                                      : 'Запустить оверлей',
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            IconButton(
-                              onPressed: _refreshPermissions,
-                              icon: const Icon(Icons.refresh,
-                                  color: FMagnitTheme.textPrimary),
-                            ),
-                          ],
-                        ),
+                        const SizedBox(height: 6),
+                        _statusRow(),
                       ],
                     ),
                   ),
                 ),
-                _healthBanner(),
                 _orderTargetBanner(),
                 _crashBanner(),
+                // --- Секция Точки ---
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
+                  child: Row(
+                    children: [
+                      const Text(
+                        'Точки',
+                        style: TextStyle(
+                          color: FMagnitTheme.textPrimary,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const Spacer(),
+                      Text(
+                        '${_waypoints.length}',
+                        style: const TextStyle(
+                          color: FMagnitTheme.textMuted,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
                 Expanded(
                   child: _waypoints.isEmpty
                       ? const Center(
                           child: Text(
-                            'Пока нет точек.\nДобавь первую!',
+                            'Пока нет точек.\nНажми + чтобы добавить.',
                             textAlign: TextAlign.center,
                             style: TextStyle(
                               color: FMagnitTheme.textMuted,
@@ -951,30 +979,15 @@ class _HomePageState extends State<HomePage> {
                 ),
               ],
             ),
-      floatingActionButton: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          FloatingActionButton.small(
-            heroTag: 'add_current',
-            onPressed: _addCurrentLocation,
-            tooltip: 'Сохранить текущее местоположение',
-            child: const Icon(Icons.my_location),
-          ),
-          const SizedBox(height: 12),
-          FloatingActionButton(
-            heroTag: 'add_manual',
-            onPressed: _addWaypoint,
-            tooltip: 'Добавить точку вручную',
-            child: const Icon(Icons.add),
-          ),
-        ],
+      floatingActionButton: FloatingActionButton(
+        onPressed: _showAddSheet,
+        tooltip: 'Добавить точку',
+        child: const Icon(Icons.add),
       ),
     );
   }
 }
 
-/// Диалог выбора точки из сохранённых (для тестового заказа).
 class _PickWaypointDialog extends StatelessWidget {
   final List<Waypoint> waypoints;
 
@@ -1155,42 +1168,4 @@ class _WaypointDialogState extends State<_WaypointDialog> {
             ),
             const SizedBox(height: 10),
             TextField(
-              controller: _latCtrl,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-                signed: true,
-              ),
-              decoration: const InputDecoration(labelText: 'Latitude'),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _lonCtrl,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-                signed: true,
-              ),
-              decoration: const InputDecoration(labelText: 'Longitude'),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _accCtrl,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(labelText: 'Accuracy (m)'),
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Отмена'),
-        ),
-        FilledButton(
-          onPressed: _save,
-          child: const Text('Сохранить'),
-        ),
-      ],
-    );
-  }
-}
+              controller:
