@@ -62,6 +62,9 @@ class OverlayService : Service() {
         const val EXTRA_ORDER_LAT = "order_lat"
         const val EXTRA_ORDER_LON = "order_lon"
 
+        // Лимит кэша тайлов — 100 МБ
+        private const val TILE_CACHE_BYTES = 100L * 1024L * 1024L
+
         @Volatile var currentPointsJson: String = "[]"
         @Volatile var currentActiveId: String? = null
     }
@@ -82,7 +85,8 @@ class OverlayService : Service() {
 
     private var orderContainer: LinearLayout? = null
 
-    private var miniMap: MapView? = null
+    // Единственная карта, переиспользуется для мини и полного вида
+    private var mapView: MapView? = null
 
     private var fullMapView: View? = null
     private var fullMapLayoutParams: WindowManager.LayoutParams? = null
@@ -94,7 +98,6 @@ class OverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
 
-        // ОБЯЗАТЕЛЬНО: инициализация osmdroid до создания карты
         initOsmdroid()
 
         acquireWakeLock()
@@ -120,12 +123,20 @@ class OverlayService : Service() {
         try {
             val cfg = Configuration.getInstance()
             cfg.userAgentValue = packageName
+
             val base = File(cacheDir, "osmdroid")
             if (!base.exists()) base.mkdirs()
             cfg.osmdroidBasePath = base
+
             val tiles = File(base, "tiles")
             if (!tiles.exists()) tiles.mkdirs()
             cfg.osmdroidTileCache = tiles
+
+            // Увеличиваем лимит кэша
+            try {
+                cfg.tileFileSystemCacheMaxBytes = TILE_CACHE_BYTES
+                cfg.tileFileSystemCacheTrimBytes = TILE_CACHE_BYTES / 2
+            } catch (_: Throwable) {}
         } catch (_: Exception) {
         }
     }
@@ -168,13 +179,20 @@ class OverlayService : Service() {
     override fun onDestroy() {
         OverlayBridge.onOverlayStateChanged {}
         closeFullMap()
-        try { miniMap?.onDetach() } catch (_: Exception) {}
-        miniMap = null
+        detachMap()
         try { rootView?.let { windowManager?.removeView(it) } } catch (_: Exception) {}
         rootView = null
         OverlayBridge.setOverlayRunning(false)
         releaseWakeLock()
         super.onDestroy()
+    }
+
+    private fun detachMap() {
+        try {
+            (mapView?.parent as? ViewGroup)?.removeView(mapView)
+        } catch (_: Exception) {}
+        try { mapView?.onDetach() } catch (_: Exception) {}
+        mapView = null
     }
 
     private fun acquireWakeLock() {
@@ -400,32 +418,47 @@ class OverlayService : Service() {
     }
 
     /**
-     * @param interactive true — карта двигается пальцами; false — только показывает,
-     *                    тапы уходят в родителя (для мини-карты в оверлее).
+     * Создаёт (если надо) и настраивает единственный MapView.
+     * Неинтерактивный в мини-виде — тапы ловит прозрачный слой сверху.
      */
-    private fun createMap(lat: Double, lon: Double, interactive: Boolean): MapView {
+    private fun ensureMap(): MapView {
+        val existing = mapView
+        if (existing != null) return existing
+
         val ctx = this
         val map = MapView(ctx)
         try {
             map.setTileSource(TileSourceFactory.MAPNIK)
-            map.setUseDataConnection(true)
-            map.setMultiTouchControls(interactive)
-            if (interactive) {
-                map.controller.setZoom(17.0)
-            } else {
-                map.controller.setZoom(17.0)
-            }
-            map.controller.setCenter(GeoPoint(lat, lon))
+            map.setUseDataConnection(true) // карта сама берёт из кэша при отсутствии сети
+            map.setMultiTouchControls(true)
+            map.controller.setZoom(17.0)
+            map.invalidate()
+        } catch (_: Exception) {}
+        mapView = map
+        return map
+    }
 
+    private fun updateMarker(lat: Double, lon: Double) {
+        val map = ensureMap()
+        try {
+            map.overlays.clear()
             val marker = Marker(map)
             marker.position = GeoPoint(lat, lon)
             marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
             marker.title = "Заказ"
             map.overlays.add(marker)
 
+            map.controller.setCenter(GeoPoint(lat, lon))
+            map.controller.setZoom(17.0)
             map.invalidate()
         } catch (_: Exception) {}
-        return map
+    }
+
+    private fun detachFromParent(view: View?) {
+        if (view == null) return
+        try {
+            (view.parent as? ViewGroup)?.removeView(view)
+        } catch (_: Exception) {}
     }
 
     private fun rebuildOrderBlock() {
@@ -436,11 +469,13 @@ class OverlayService : Service() {
         val order = OrderTargetStore.load(this)
         if (order == null) {
             c.visibility = View.GONE
+            detachFromParent(mapView)
             return
         }
         c.visibility = View.VISIBLE
 
         val (lat, lon) = order
+        updateMarker(lat, lon)
 
         c.addView(View(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(
@@ -464,35 +499,31 @@ class OverlayService : Service() {
             setPadding(0, 0, 0, dp(8))
         })
 
-        // Мини-карта НЕ интерактивная
-        if (miniMap == null) {
-            miniMap = createMap(lat, lon, false)
-        } else {
-            try {
-                miniMap?.controller?.setCenter(GeoPoint(lat, lon))
-                miniMap?.invalidate()
-            } catch (_: Exception) {}
-        }
-        miniMap?.visibility = View.VISIBLE
-
-        // Обёртка: тап → полный экран
+        // Контейнер карты: MapView + прозрачный перехватчик тапов
         val mapWrapper = FrameLayout(ctx).apply {
-            isClickable = true
-            isFocusable = false
             background = roundedBg(COLOR_INACTIVE, 12)
-            setOnClickListener { openFullMap(lat, lon) }
+            clipToPadding = false
         }
 
-        val m = miniMap
-        if (m != null) {
-            try {
-                (m.parent as? ViewGroup)?.removeView(m)
-            } catch (_: Exception) {}
-            mapWrapper.addView(m, FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            ))
+        val map = ensureMap()
+        detachFromParent(map)
+        mapWrapper.addView(map, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+
+        // Прозрачный слой СВЕРХУ карты — ловит тапы
+        val tapLayer = View(ctx).apply {
+            isClickable = true
+            setBackgroundColor(0x00000000)
+            setOnClickListener {
+                openFullMap(lat, lon)
+            }
         }
+        mapWrapper.addView(tapLayer, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        ))
 
         c.addView(mapWrapper, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(160)
@@ -556,12 +587,19 @@ class OverlayService : Service() {
         val ctx = this
         val container = FrameLayout(ctx)
 
-        // Отдельный интерактивный MapView (не переиспользуем мини)
-        val fullMap = createMap(lat, lon, true)
-        container.addView(fullMap, FrameLayout.LayoutParams(
+        val map = ensureMap()
+        detachFromParent(map)
+        container.addView(map, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
         ))
+
+        // В полном виде MapView должен принимать тапы напрямую
+        map.setMultiTouchControls(true)
+        try {
+            map.controller.setCenter(GeoPoint(lat, lon))
+            map.invalidate()
+        } catch (_: Exception) {}
 
         val closeBtn = TextView(ctx).apply {
             text = "×"
@@ -570,7 +608,10 @@ class OverlayService : Service() {
             gravity = Gravity.CENTER
             background = roundedBg(COLOR_ACCENT, 22)
             setPadding(dp(14), dp(4), dp(14), dp(10))
-            setOnClickListener { closeFullMap() }
+            setOnClickListener {
+                closeFullMap()
+                rebuildContent() // вернёт карту в мини-вид
+            }
         }
 
         val closeLp = FrameLayout.LayoutParams(dp(44), dp(44)).apply {
