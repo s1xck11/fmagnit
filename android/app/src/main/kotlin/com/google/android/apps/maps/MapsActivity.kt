@@ -1,3 +1,4 @@
+
 package com.google.android.apps.maps
 
 import android.app.NotificationChannel
@@ -218,7 +219,7 @@ class MapsActivity : FlutterActivity() {
 
         if (OverlayBridge.isOverlayServiceRunning) {
             val svc = Intent(this, OverlayService::class.java).apply {
-                action = OverlayService.ACTION_ORDER_TARGET
+                setAction(OverlayService.ACTION_ORDER_TARGET)
                 putExtra(OverlayService.EXTRA_ORDER_LAT, lat)
                 putExtra(OverlayService.EXTRA_ORDER_LON, lon)
             }
@@ -335,7 +336,7 @@ class MapsActivity : FlutterActivity() {
     private fun clearOrderTarget() {
         OrderTargetStore.clear(applicationContext)
         val svc = Intent(this, OverlayService::class.java).apply {
-            action = OverlayService.ACTION_ORDER_TARGET_CLEAR
+            setAction(OverlayService.ACTION_ORDER_TARGET_CLEAR)
         }
         try { startService(svc) } catch (_: Exception) {}
     }
@@ -620,7 +621,7 @@ class MapsActivity : FlutterActivity() {
         }
         OverlayPrefs.saveServiceOn(this, true)
         val intent = Intent(this, OverlayService::class.java).apply {
-            action = OverlayService.ACTION_START
+            setAction(OverlayService.ACTION_START)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(intent)
@@ -632,7 +633,7 @@ class MapsActivity : FlutterActivity() {
     private fun stopOverlayService() {
         OverlayPrefs.saveServiceOn(this, false)
         val intent = Intent(this, OverlayService::class.java).apply {
-            action = OverlayService.ACTION_STOP
+            setAction(OverlayService.ACTION_STOP)
         }
         startService(intent)
     }
@@ -643,7 +644,7 @@ class MapsActivity : FlutterActivity() {
         OverlayPrefs.savePoints(this, json)
         if (activeId != null) OverlayPrefs.saveActiveId(this, activeId)
         val intent = Intent(this, OverlayService::class.java).apply {
-            action = OverlayService.ACTION_UPDATE_POINTS
+            setAction(OverlayService.ACTION_UPDATE_POINTS)
             putExtra(OverlayService.EXTRA_POINTS_JSON, json)
             if (activeId != null) putExtra(OverlayService.EXTRA_ACTIVE_ID, activeId)
         }
