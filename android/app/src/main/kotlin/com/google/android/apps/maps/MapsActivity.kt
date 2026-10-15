@@ -68,6 +68,9 @@ class MapsActivity : FlutterActivity() {
     private var overlayChannel: MethodChannel? = null
     private var mockChannel: MethodChannel? = null
 
+    // Защита от повторной обработки одного и того же URI
+    private var lastHandledUri: String? = null
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         try {
             super.configureFlutterEngine(flutterEngine)
@@ -202,8 +205,6 @@ class MapsActivity : FlutterActivity() {
                 @Suppress("UnspecifiedRegisterReceiverFlag")
                 registerReceiver(pointBroadcastReceiver, filter)
             }
-
-            handleIncomingIntent(intent)
         } catch (e: Throwable) {
             CrashLogger.log(applicationContext, "configureFlutterEngine_body", e)
         }
@@ -212,11 +213,30 @@ class MapsActivity : FlutterActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        // Не обрабатываем тут — сделаем это в onResume
+    }
+
+    override fun onResume() {
+        super.onResume()
+
+        // Логируем каждый onResume с текущим интентом
         try {
+            val currentIntent = intent
+            val data: Uri? = currentIntent?.data
+            CrashLogger.logMessage(
+                applicationContext,
+                "onResume",
+                "action=${currentIntent?.action}\n" +
+                        "data=$data\n" +
+                        "scheme=${data?.scheme}\n" +
+                        "ssp=${data?.schemeSpecificPart}"
+            )
+        } catch (_: Exception) {}
+
+        // Обрабатываем интент с задержкой — даём Flutter движку подняться
+        handler?.postDelayed({
             handleIncomingIntent(intent)
-        } catch (e: Throwable) {
-            CrashLogger.log(applicationContext, "onNewIntent", e)
-        }
+        }, 500)
     }
 
     private fun handleIncomingIntent(intent: Intent?) {
@@ -228,7 +248,6 @@ class MapsActivity : FlutterActivity() {
             Log.d(TAG, "action=$action")
             Log.d(TAG, "data=$data")
 
-            // ПОДРОБНАЯ ДИАГНОСТИКА — записываем ВСЁ, что даёт Uri
             CrashLogger.logMessage(
                 applicationContext,
                 "intent_received",
@@ -239,15 +258,19 @@ class MapsActivity : FlutterActivity() {
                         "host=${data?.host}\n" +
                         "path=${data?.path}\n" +
                         "query=${data?.query}\n" +
-                        "fragment=${data?.fragment}\n" +
                         "isOpaque=${data?.isOpaque}\n" +
-                        "isHierarchical=${data?.isHierarchical}\n" +
-                        "isAbsolute=${data?.isAbsolute}\n" +
-                        "toString=${data?.toString()}"
+                        "isHierarchical=${data?.isHierarchical}"
             )
 
             if (data == null) {
-                Log.d(TAG, "data == null, not an external launch — skipping")
+                Log.d(TAG, "data == null, skipping")
+                return
+            }
+
+            // Защита от повторной обработки того же URI
+            val uriStr = data.toString()
+            if (uriStr == lastHandledUri) {
+                Log.d(TAG, "Same URI already handled — skipping")
                 return
             }
 
@@ -269,12 +292,15 @@ class MapsActivity : FlutterActivity() {
                     "fmagnit: координаты не распознаны",
                     data.toString()
                 )
+                lastHandledUri = uriStr
                 finish()
                 return
             }
 
             val (lat, lon) = parsed
             Log.d(TAG, "Parsed coordinates: lat=$lat, lon=$lon")
+
+            lastHandledUri = uriStr
 
             CrashLogger.logMessage(
                 applicationContext,
@@ -365,15 +391,21 @@ class MapsActivity : FlutterActivity() {
         when (scheme.lowercase()) {
             "google.navigation" -> {
                 val ssp = uri.schemeSpecificPart ?: return null
-                val q = extractParam(ssp, "q") ?: ssp
-                return parseLatLonString(q)
+                // Формат "q=56.8558,53.2218" или "q=56.8558,53.2218&mode=d"
+                // или просто "56.8558,53.2218"
+                val idx = ssp.indexOf('=')
+                val coords = if (idx >= 0) ssp.substring(idx + 1).substringBefore("&") else ssp
+                return parseLatLonString(coords)
             }
             "geo" -> {
                 val ssp = uri.schemeSpecificPart ?: return null
                 val coordsPart = ssp.substringBefore("?")
                 parseLatLonString(coordsPart)?.let { return it }
-                val q = extractParam(ssp, "q")
-                if (q != null) return parseLatLonString(q)
+                val idx = ssp.indexOf("q=")
+                if (idx >= 0) {
+                    val coords = ssp.substring(idx + 2).substringBefore("&")
+                    parseLatLonString(coords)?.let { return it }
+                }
                 return null
             }
             "https", "http" -> {
@@ -403,23 +435,6 @@ class MapsActivity : FlutterActivity() {
             }
             else -> return null
         }
-    }
-
-    private fun extractParam(ssp: String, key: String): String? {
-        try {
-            val qIdx = ssp.indexOf('?')
-            if (qIdx < 0) return null
-            val query = ssp.substring(qIdx + 1)
-            for (part in query.split('&')) {
-                val eq = part.indexOf('=')
-                if (eq < 0) continue
-                val k = part.substring(0, eq)
-                if (k == key) {
-                    return part.substring(eq + 1)
-                }
-            }
-        } catch (_: Exception) {}
-        return null
     }
 
     private fun parseLatLonString(s: String): Pair<Double, Double>? {
