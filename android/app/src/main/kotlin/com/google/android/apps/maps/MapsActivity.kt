@@ -81,7 +81,6 @@ class MapsActivity : FlutterActivity() {
         }
 
         try {
-            // Инициализация osmdroid
             try {
                 Configuration.getInstance().load(
                     applicationContext,
@@ -181,6 +180,12 @@ class MapsActivity : FlutterActivity() {
                             clearOrderTarget()
                             result.success(true)
                         }
+                        "setManualOrderTarget" -> {
+                            val lat = call.argument<Double>("latitude") ?: 0.0
+                            val lon = call.argument<Double>("longitude") ?: 0.0
+                            setManualOrderTarget(lat, lon)
+                            result.success(true)
+                        }
                         else -> result.notImplemented()
                     }
                 } catch (e: Throwable) {
@@ -253,12 +258,7 @@ class MapsActivity : FlutterActivity() {
                 "action=$action\n" +
                         "data=$data\n" +
                         "scheme=${data?.scheme}\n" +
-                        "ssp=${data?.schemeSpecificPart}\n" +
-                        "host=${data?.host}\n" +
-                        "path=${data?.path}\n" +
-                        "query=${data?.query}\n" +
-                        "isOpaque=${data?.isOpaque}\n" +
-                        "isHierarchical=${data?.isHierarchical}"
+                        "ssp=${data?.schemeSpecificPart}"
             )
 
             if (data == null) return
@@ -271,7 +271,7 @@ class MapsActivity : FlutterActivity() {
                 CrashLogger.logMessage(
                     applicationContext,
                     "parse_failed",
-                    "Could not parse: $data\nscheme=${data.scheme}\nssp=${data.schemeSpecificPart}"
+                    "Could not parse: $data"
                 )
                 showToast("fmagnit: не удалось распарсить координаты")
                 showNotification(
@@ -285,12 +285,6 @@ class MapsActivity : FlutterActivity() {
 
             val (lat, lon) = parsed
             lastHandledUri = uriStr
-
-            CrashLogger.logMessage(
-                applicationContext,
-                "parse_ok",
-                "data=$data\nscheme=${data.scheme}\nlat=$lat lon=$lon"
-            )
 
             OrderTargetStore.save(applicationContext, lat, lon, data.toString())
 
@@ -318,6 +312,26 @@ class MapsActivity : FlutterActivity() {
             handler?.postDelayed({ finish() }, 800)
         } catch (e: Throwable) {
             CrashLogger.log(applicationContext, "handleIncomingIntent_CRASH", e)
+        }
+    }
+
+    /**
+     * Тестовый заказ: сохраняет координаты в OrderTargetStore
+     * и уведомляет OverlayService, чтобы он раскрылся с картой.
+     */
+    private fun setManualOrderTarget(lat: Double, lon: Double) {
+        try {
+            OrderTargetStore.save(applicationContext, lat, lon, "manual://test")
+            if (OverlayBridge.isOverlayServiceRunning) {
+                val svc = Intent(this, OverlayService::class.java).apply {
+                    setAction(OverlayService.ACTION_ORDER_TARGET)
+                    putExtra(OverlayService.EXTRA_ORDER_LAT, lat)
+                    putExtra(OverlayService.EXTRA_ORDER_LON, lon)
+                }
+                try { startService(svc) } catch (_: Exception) {}
+            }
+        } catch (e: Throwable) {
+            CrashLogger.log(applicationContext, "setManualOrderTarget", e)
         }
     }
 
