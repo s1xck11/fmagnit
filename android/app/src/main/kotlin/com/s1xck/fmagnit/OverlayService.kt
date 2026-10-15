@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -22,11 +23,16 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import org.json.JSONArray
 import org.json.JSONObject
+import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.util.GeoPoint
+import org.osmdroid.views.MapView
+import org.osmdroid.views.overlay.Marker
 import java.util.Locale
 
 class OverlayService : Service() {
@@ -74,6 +80,13 @@ class OverlayService : Service() {
     private var dotView: TextView? = null
 
     private var orderContainer: LinearLayout? = null
+
+    // Карта
+    private var miniMap: MapView? = null
+
+    // Полноэкранный режим
+    private var fullMapView: View? = null
+    private var fullMapLayoutParams: WindowManager.LayoutParams? = null
 
     private var wakeLock: PowerManager.WakeLock? = null
 
@@ -138,6 +151,9 @@ class OverlayService : Service() {
 
     override fun onDestroy() {
         OverlayBridge.onOverlayStateChanged {}
+        closeFullMap()
+        try { miniMap?.onDetach() } catch (_: Exception) {}
+        miniMap = null
         try { rootView?.let { windowManager?.removeView(it) } } catch (_: Exception) {}
         rootView = null
         OverlayBridge.setOverlayRunning(false)
@@ -367,6 +383,27 @@ class OverlayService : Service() {
         dotView?.setTextColor(if (isRunning) COLOR_DOT_ACTIVE else COLOR_DOT_IDLE)
     }
 
+    /**
+     * Создаёт и настраивает mini MapView. Кэшируем, чтобы не плодить.
+     */
+    private fun createMiniMap(lat: Double, lon: Double): MapView {
+        val ctx = this
+        val map = MapView(ctx)
+        try {
+            map.setTileSource(TileSourceFactory.MAPNIK)
+            map.setMultiTouchControls(true)
+            map.controller.setZoom(17.0)
+            map.controller.setCenter(GeoPoint(lat, lon))
+
+            val marker = Marker(map)
+            marker.position = GeoPoint(lat, lon)
+            marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+            marker.title = "Заказ"
+            map.overlays.add(marker)
+        } catch (_: Exception) {}
+        return map
+    }
+
     private fun rebuildOrderBlock() {
         val ctx = this
         val c = orderContainer ?: return
@@ -375,12 +412,15 @@ class OverlayService : Service() {
         val order = OrderTargetStore.load(this)
         if (order == null) {
             c.visibility = View.GONE
+            // Скрываем мини-карту если она была
+            miniMap?.visibility = View.GONE
             return
         }
         c.visibility = View.VISIBLE
 
         val (lat, lon) = order
 
+        // Разделитель
         c.addView(View(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(1)
@@ -388,6 +428,7 @@ class OverlayService : Service() {
             setBackgroundColor(0x22FFFFFF)
         })
 
+        // Заголовок
         c.addView(TextView(ctx).apply {
             text = "Заказ клиента"
             setTextColor(COLOR_ACCENT)
@@ -396,13 +437,47 @@ class OverlayService : Service() {
             setPadding(0, 0, 0, dp(4))
         })
 
+        // Координаты
         c.addView(TextView(ctx).apply {
             text = String.format(Locale.US, "%.6f, %.6f", lat, lon)
             setTextColor(COLOR_TEXT)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setPadding(0, 0, 0, dp(10))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setPadding(0, 0, 0, dp(8))
         })
 
+        // Карта — одна для мини и полного вида
+        if (miniMap == null) {
+            miniMap = createMiniMap(lat, lon)
+        } else {
+            try {
+                miniMap?.controller?.setCenter(GeoPoint(lat, lon))
+                miniMap?.invalidate()
+            } catch (_: Exception) {}
+        }
+        miniMap?.visibility = View.VISIBLE
+
+        // Обёртка для карты (клик → полный экран)
+        val mapWrapper = FrameLayout(ctx).apply {
+            setOnClickListener { openFullMap(lat, lon) }
+            background = roundedBg(COLOR_INACTIVE, 12)
+        }
+
+        val m = miniMap
+        if (m != null) {
+            try {
+                (m.parent as? ViewGroup)?.removeView(m)
+            } catch (_: Exception) {}
+            mapWrapper.addView(m, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            ))
+        }
+
+        c.addView(mapWrapper, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(160)
+        ).also { it.bottomMargin = dp(10) })
+
+        // Кнопки
         val row = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -417,7 +492,6 @@ class OverlayService : Service() {
             setPadding(dp(14), dp(12), dp(14), dp(12))
             background = roundedBg(COLOR_ACCENT, 14)
             setOnClickListener {
-                // Отправляем broadcast, MapsActivity его ловит и напрямую запускает mock
                 val b = Intent(ACTION_ORDER_START_MOCK)
                 b.setPackage(packageName)
                 b.putExtra(EXTRA_ORDER_LAT, lat)
@@ -452,6 +526,81 @@ class OverlayService : Service() {
         row.addView(goBtn)
         row.addView(closeBtn)
         c.addView(row)
+    }
+
+    // ---------- Полноэкранная карта ----------
+
+    private fun openFullMap(lat: Double, lon: Double) {
+        if (fullMapView != null) return
+
+        val ctx = this
+        val container = FrameLayout(ctx)
+
+        val fullMap = createMiniMap(lat, lon)
+        container.addView(fullMap, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+
+        // Кнопка закрытия
+        val closeBtn = TextView(ctx).apply {
+            text = "×"
+            setTextColor(COLOR_TEXT)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 26f)
+            gravity = Gravity.CENTER
+            background = roundedBg(COLOR_ACCENT, 22)
+            setPadding(dp(14), dp(4), dp(14), dp(10))
+            setOnClickListener { closeFullMap() }
+        }
+
+        val closeLp = FrameLayout.LayoutParams(dp(44), dp(44)).apply {
+            gravity = Gravity.TOP or Gravity.END
+            topMargin = dp(12)
+            rightMargin = dp(12)
+        }
+        container.addView(closeBtn, closeLp)
+
+        // Контейнер — светло-чёрный фон со скруглениями
+        val wrapper = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            background = roundedBg(COLOR_BG, 16)
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+            addView(container, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+            ))
+        }
+
+        // Размер 85% экрана
+        val dm = resources.displayMetrics
+        val w = (dm.widthPixels * 0.9).toInt()
+        val h = (dm.heightPixels * 0.85).toInt()
+
+        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
+
+        fullMapLayoutParams = WindowManager.LayoutParams(
+            w, h, type,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.CENTER
+        }
+
+        try {
+            windowManager?.addView(wrapper, fullMapLayoutParams)
+            fullMapView = wrapper
+        } catch (e: Exception) {
+            Toast.makeText(this, "Ошибка карты: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun closeFullMap() {
+        try {
+            fullMapView?.let { windowManager?.removeView(it) }
+        } catch (_: Exception) {}
+        fullMapView = null
+        fullMapLayoutParams = null
     }
 
     private fun rebuildContent() {
