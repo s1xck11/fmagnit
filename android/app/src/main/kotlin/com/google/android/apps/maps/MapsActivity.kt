@@ -250,7 +250,7 @@ class MapsActivity : FlutterActivity() {
                 CrashLogger.logMessage(
                     applicationContext,
                     "parse_failed",
-                    "Could not parse: $data"
+                    "Could not parse: $data\nscheme=${data.scheme}\nssp=${data.schemeSpecificPart}\nhost=${data.host}\npath=${data.path}\nquery=${data.query}"
                 )
                 showToast("fmagnit: не удалось распарсить координаты")
                 showNotification(
@@ -263,6 +263,12 @@ class MapsActivity : FlutterActivity() {
 
             val (lat, lon) = parsed
             Log.d(TAG, "Parsed coordinates: lat=$lat, lon=$lon")
+
+            CrashLogger.logMessage(
+                applicationContext,
+                "parse_ok",
+                "data=$data\nscheme=${data.scheme}\nlat=$lat lon=$lon"
+            )
 
             OrderTargetStore.save(applicationContext, lat, lon, data.toString())
 
@@ -341,43 +347,78 @@ class MapsActivity : FlutterActivity() {
         } catch (_: Exception) {}
     }
 
+    /**
+     * Безопасный парсер URI. Больше не использует getQueryParameter
+     * для opaque-схем (google.navigation:, geo:).
+     */
     private fun parseCoordinates(uri: Uri): Pair<Double, Double>? {
-        if (uri.scheme == "google.navigation") {
-            val q = uri.getQueryParameter("q") ?: return null
-            return parseLatLonString(q)
-        }
+        val scheme = uri.scheme ?: return null
 
-        if (uri.scheme == "geo") {
-            val ssp = uri.schemeSpecificPart ?: return null
-            val coordsPart = ssp.substringBefore("?")
-            parseLatLonString(coordsPart)?.let { return it }
-            val q = uri.getQueryParameter("q")
-            if (q != null) return parseLatLonString(q)
-            return null
-        }
+        when (scheme.lowercase()) {
+            "google.navigation" -> {
+                // Формат: google.navigation:q=55.75,37.61 или google.navigation:q=55.75,37.61&mode=d
+                val ssp = uri.schemeSpecificPart ?: return null
+                val q = extractParam(ssp, "q") ?: ssp
+                return parseLatLonString(q)
+            }
+            "geo" -> {
+                // Формат: geo:55.75,37.61 или geo:55.75,37.61?q=55.75,37.61 или geo:0,0?q=55.75,37.61
+                val ssp = uri.schemeSpecificPart ?: return null
+                val coordsPart = ssp.substringBefore("?")
+                parseLatLonString(coordsPart)?.let { return it }
+                val q = extractParam(ssp, "q")
+                if (q != null) return parseLatLonString(q)
+                return null
+            }
+            "https", "http" -> {
+                // Иерархический URI — можно getQueryParameter
+                try {
+                    uri.getQueryParameter("destination")?.let {
+                        parseLatLonString(it)?.let { r -> return r }
+                    }
+                    uri.getQueryParameter("q")?.let {
+                        parseLatLonString(it)?.let { r -> return r }
+                    }
+                    uri.getQueryParameter("ll")?.let {
+                        parseLatLonString(it)?.let { r -> return r }
+                    }
+                    uri.getQueryParameter("daddr")?.let {
+                        parseLatLonString(it)?.let { r -> return r }
+                    }
+                } catch (_: Exception) {}
 
-        if (uri.scheme == "https" || uri.scheme == "http") {
-            uri.getQueryParameter("destination")?.let {
-                parseLatLonString(it)?.let { r -> return r }
+                // Иногда координаты лежат прямо в пути: /maps/@55.75,37.61,15z
+                val path = uri.path ?: return null
+                val atIdx = path.indexOf('@')
+                if (atIdx >= 0) {
+                    val afterAt = path.substring(atIdx + 1)
+                    val coordPart = afterAt.split(',').take(2).joinToString(",")
+                    parseLatLonString(coordPart)?.let { return it }
+                }
+                return null
             }
-            uri.getQueryParameter("q")?.let {
-                parseLatLonString(it)?.let { r -> return r }
-            }
-            uri.getQueryParameter("ll")?.let {
-                parseLatLonString(it)?.let { r -> return r }
-            }
-            uri.getQueryParameter("daddr")?.let {
-                parseLatLonString(it)?.let { r -> return r }
-            }
-            val path = uri.path ?: ""
-            val atIdx = path.indexOf('@')
-            if (atIdx >= 0) {
-                val afterAt = path.substring(atIdx + 1)
-                val coordPart = afterAt.split(',').take(2).joinToString(",")
-                parseLatLonString(coordPart)?.let { return it }
-            }
+            else -> return null
         }
+    }
 
+    /**
+     * Извлекает параметр из строки вида "q=55.75,37.61&mode=d"
+     * (без использования Uri.getQueryParameter — она падает на opaque URI).
+     */
+    private fun extractParam(ssp: String, key: String): String? {
+        try {
+            val qIdx = ssp.indexOf('?')
+            if (qIdx < 0) return null
+            val query = ssp.substring(qIdx + 1)
+            for (part in query.split('&')) {
+                val eq = part.indexOf('=')
+                if (eq < 0) continue
+                val k = part.substring(0, eq)
+                if (k == key) {
+                    return part.substring(eq + 1)
+                }
+            }
+        } catch (_: Exception) {}
         return null
     }
 
