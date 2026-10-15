@@ -7,7 +7,6 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -29,10 +28,12 @@ import android.widget.TextView
 import android.widget.Toast
 import org.json.JSONArray
 import org.json.JSONObject
+import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
+import java.io.File
 import java.util.Locale
 
 class OverlayService : Service() {
@@ -81,10 +82,8 @@ class OverlayService : Service() {
 
     private var orderContainer: LinearLayout? = null
 
-    // Карта
     private var miniMap: MapView? = null
 
-    // Полноэкранный режим
     private var fullMapView: View? = null
     private var fullMapLayoutParams: WindowManager.LayoutParams? = null
 
@@ -94,6 +93,9 @@ class OverlayService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+
+        // ОБЯЗАТЕЛЬНО: инициализация osmdroid до создания карты
+        initOsmdroid()
 
         acquireWakeLock()
 
@@ -112,6 +114,20 @@ class OverlayService : Service() {
 
         buildOverlayView()
         applyVisibility()
+    }
+
+    private fun initOsmdroid() {
+        try {
+            val cfg = Configuration.getInstance()
+            cfg.userAgentValue = packageName
+            val base = File(cacheDir, "osmdroid")
+            if (!base.exists()) base.mkdirs()
+            cfg.osmdroidBasePath = base
+            val tiles = File(base, "tiles")
+            if (!tiles.exists()) tiles.mkdirs()
+            cfg.osmdroidTileCache = tiles
+        } catch (_: Exception) {
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -384,15 +400,21 @@ class OverlayService : Service() {
     }
 
     /**
-     * Создаёт и настраивает mini MapView. Кэшируем, чтобы не плодить.
+     * @param interactive true — карта двигается пальцами; false — только показывает,
+     *                    тапы уходят в родителя (для мини-карты в оверлее).
      */
-    private fun createMiniMap(lat: Double, lon: Double): MapView {
+    private fun createMap(lat: Double, lon: Double, interactive: Boolean): MapView {
         val ctx = this
         val map = MapView(ctx)
         try {
             map.setTileSource(TileSourceFactory.MAPNIK)
-            map.setMultiTouchControls(true)
-            map.controller.setZoom(17.0)
+            map.setUseDataConnection(true)
+            map.setMultiTouchControls(interactive)
+            if (interactive) {
+                map.controller.setZoom(17.0)
+            } else {
+                map.controller.setZoom(17.0)
+            }
             map.controller.setCenter(GeoPoint(lat, lon))
 
             val marker = Marker(map)
@@ -400,6 +422,8 @@ class OverlayService : Service() {
             marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
             marker.title = "Заказ"
             map.overlays.add(marker)
+
+            map.invalidate()
         } catch (_: Exception) {}
         return map
     }
@@ -412,15 +436,12 @@ class OverlayService : Service() {
         val order = OrderTargetStore.load(this)
         if (order == null) {
             c.visibility = View.GONE
-            // Скрываем мини-карту если она была
-            miniMap?.visibility = View.GONE
             return
         }
         c.visibility = View.VISIBLE
 
         val (lat, lon) = order
 
-        // Разделитель
         c.addView(View(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(1)
@@ -428,7 +449,6 @@ class OverlayService : Service() {
             setBackgroundColor(0x22FFFFFF)
         })
 
-        // Заголовок
         c.addView(TextView(ctx).apply {
             text = "Заказ клиента"
             setTextColor(COLOR_ACCENT)
@@ -437,7 +457,6 @@ class OverlayService : Service() {
             setPadding(0, 0, 0, dp(4))
         })
 
-        // Координаты
         c.addView(TextView(ctx).apply {
             text = String.format(Locale.US, "%.6f, %.6f", lat, lon)
             setTextColor(COLOR_TEXT)
@@ -445,9 +464,9 @@ class OverlayService : Service() {
             setPadding(0, 0, 0, dp(8))
         })
 
-        // Карта — одна для мини и полного вида
+        // Мини-карта НЕ интерактивная
         if (miniMap == null) {
-            miniMap = createMiniMap(lat, lon)
+            miniMap = createMap(lat, lon, false)
         } else {
             try {
                 miniMap?.controller?.setCenter(GeoPoint(lat, lon))
@@ -456,10 +475,12 @@ class OverlayService : Service() {
         }
         miniMap?.visibility = View.VISIBLE
 
-        // Обёртка для карты (клик → полный экран)
+        // Обёртка: тап → полный экран
         val mapWrapper = FrameLayout(ctx).apply {
-            setOnClickListener { openFullMap(lat, lon) }
+            isClickable = true
+            isFocusable = false
             background = roundedBg(COLOR_INACTIVE, 12)
+            setOnClickListener { openFullMap(lat, lon) }
         }
 
         val m = miniMap
@@ -477,7 +498,6 @@ class OverlayService : Service() {
             ViewGroup.LayoutParams.MATCH_PARENT, dp(160)
         ).also { it.bottomMargin = dp(10) })
 
-        // Кнопки
         val row = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -536,13 +556,13 @@ class OverlayService : Service() {
         val ctx = this
         val container = FrameLayout(ctx)
 
-        val fullMap = createMiniMap(lat, lon)
+        // Отдельный интерактивный MapView (не переиспользуем мини)
+        val fullMap = createMap(lat, lon, true)
         container.addView(fullMap, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
         ))
 
-        // Кнопка закрытия
         val closeBtn = TextView(ctx).apply {
             text = "×"
             setTextColor(COLOR_TEXT)
@@ -560,7 +580,6 @@ class OverlayService : Service() {
         }
         container.addView(closeBtn, closeLp)
 
-        // Контейнер — светло-чёрный фон со скруглениями
         val wrapper = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             background = roundedBg(COLOR_BG, 16)
@@ -570,7 +589,6 @@ class OverlayService : Service() {
             ))
         }
 
-        // Размер 85% экрана
         val dm = resources.displayMetrics
         val w = (dm.widthPixels * 0.9).toInt()
         val h = (dm.heightPixels * 0.85).toInt()
