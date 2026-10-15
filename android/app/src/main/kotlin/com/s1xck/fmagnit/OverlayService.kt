@@ -84,10 +84,18 @@ class OverlayService : Service() {
 
     private var orderContainer: LinearLayout? = null
 
-    private var mapView: MapView? = null
+    // Мини-карта живёт в оверлее
+    private var miniMap: MapView? = null
 
+    // Полная карта — отдельная, создаётся/уничтожается
+    private var fullMap: MapView? = null
     private var fullMapView: View? = null
     private var fullMapLayoutParams: WindowManager.LayoutParams? = null
+
+    // Запомним текущую точку заказа
+    private var currentOrderLat: Double = 0.0
+    private var currentOrderLon: Double = 0.0
+    private var hasCurrentOrder: Boolean = false
 
     private var wakeLock: PowerManager.WakeLock? = null
 
@@ -155,12 +163,16 @@ class OverlayService : Service() {
                 val lon = intent.getDoubleExtra(EXTRA_ORDER_LON, Double.NaN)
                 if (!lat.isNaN() && !lon.isNaN()) {
                     OrderTargetStore.save(this, lat, lon)
+                    currentOrderLat = lat
+                    currentOrderLon = lon
+                    hasCurrentOrder = true
                     expanded = true
                     handler.post { rebuildContent() }
                 }
             }
             ACTION_ORDER_TARGET_CLEAR -> {
                 OrderTargetStore.clear(this)
+                hasCurrentOrder = false
                 handler.post { rebuildContent() }
             }
         }
@@ -170,7 +182,8 @@ class OverlayService : Service() {
     override fun onDestroy() {
         OverlayBridge.onOverlayStateChanged {}
         closeFullMap()
-        detachMap()
+        detachMap(miniMap)
+        miniMap = null
         try { rootView?.let { windowManager?.removeView(it) } } catch (_: Exception) {}
         rootView = null
         OverlayBridge.setOverlayRunning(false)
@@ -178,10 +191,10 @@ class OverlayService : Service() {
         super.onDestroy()
     }
 
-    private fun detachMap() {
-        try { (mapView?.parent as? ViewGroup)?.removeView(mapView) } catch (_: Exception) {}
-        try { mapView?.onDetach() } catch (_: Exception) {}
-        mapView = null
+    private fun detachMap(map: MapView?) {
+        if (map == null) return
+        try { (map.parent as? ViewGroup)?.removeView(map) } catch (_: Exception) {}
+        try { map.onDetach() } catch (_: Exception) {}
     }
 
     private fun acquireWakeLock() {
@@ -402,9 +415,8 @@ class OverlayService : Service() {
         dotView?.setTextColor(if (isRunning) COLOR_DOT_ACTIVE else COLOR_DOT_IDLE)
     }
 
-    private fun ensureMap(): MapView {
-        val existing = mapView
-        if (existing != null) return existing
+    /** Создаёт MapView для указанного размерного контекста. */
+    private fun createMapView(): MapView {
         val ctx = this
         val map = MapView(ctx)
         try {
@@ -414,12 +426,10 @@ class OverlayService : Service() {
             map.controller.setZoom(17.0)
             map.invalidate()
         } catch (_: Exception) {}
-        mapView = map
         return map
     }
 
-    private fun updateMarker(lat: Double, lon: Double) {
-        val map = ensureMap()
+    private fun addMarker(map: MapView, lat: Double, lon: Double) {
         try {
             map.overlays.clear()
             val marker = Marker(map)
@@ -433,11 +443,6 @@ class OverlayService : Service() {
         } catch (_: Exception) {}
     }
 
-    private fun detachFromParent(view: View?) {
-        if (view == null) return
-        try { (view.parent as? ViewGroup)?.removeView(view) } catch (_: Exception) {}
-    }
-
     private fun rebuildOrderBlock() {
         val ctx = this
         val c = orderContainer ?: return
@@ -446,13 +451,21 @@ class OverlayService : Service() {
         val order = OrderTargetStore.load(this)
         if (order == null) {
             c.visibility = View.GONE
-            detachFromParent(mapView)
+            hasCurrentOrder = false
             return
         }
         c.visibility = View.VISIBLE
 
         val (lat, lon) = order
-        updateMarker(lat, lon)
+        currentOrderLat = lat
+        currentOrderLon = lon
+        hasCurrentOrder = true
+
+        // Мини-карта — создаём если её нет
+        if (miniMap == null) {
+            miniMap = createMapView()
+        }
+        miniMap?.let { addMarker(it, lat, lon) }
 
         c.addView(View(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(
@@ -480,12 +493,15 @@ class OverlayService : Service() {
             background = roundedBg(COLOR_INACTIVE, 12)
         }
 
-        val map = ensureMap()
-        detachFromParent(map)
-        mapWrapper.addView(map, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT
-        ))
+        // Сначала убедимся, что miniMap не привязан к другому родителю
+        try { (miniMap?.parent as? ViewGroup)?.removeView(miniMap) } catch (_: Exception) {}
+
+        miniMap?.let {
+            mapWrapper.addView(it, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            ))
+        }
 
         val tapLayer = View(ctx).apply {
             isClickable = true
@@ -551,23 +567,24 @@ class OverlayService : Service() {
         c.addView(row)
     }
 
+    // ---------- Полноэкранная карта ----------
+
     private fun openFullMap(lat: Double, lon: Double) {
         if (fullMapView != null) return
 
         val ctx = this
-        val container = FrameLayout(ctx)
 
-        val map = ensureMap()
-        detachFromParent(map)
-        container.addView(map, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT
-        ))
-        map.setMultiTouchControls(true)
-        try {
-            map.controller.setCenter(GeoPoint(lat, lon))
-            map.invalidate()
-        } catch (_: Exception) {}
+        // Создаём ОТДЕЛЬНУЮ карту для полного режима
+        fullMap = createMapView()
+        fullMap?.let { addMarker(it, lat, lon) }
+
+        val container = FrameLayout(ctx)
+        fullMap?.let {
+            container.addView(it, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            ))
+        }
 
         val closeBtn = TextView(ctx).apply {
             text = "×"
@@ -619,6 +636,7 @@ class OverlayService : Service() {
             fullMapView = wrapper
         } catch (e: Exception) {
             Toast.makeText(this, "Ошибка карты: ${e.message}", Toast.LENGTH_LONG).show()
+            closeFullMap()
         }
     }
 
@@ -626,6 +644,8 @@ class OverlayService : Service() {
         try { fullMapView?.let { windowManager?.removeView(it) } } catch (_: Exception) {}
         fullMapView = null
         fullMapLayoutParams = null
+        detachMap(fullMap)
+        fullMap = null
     }
 
     private fun rebuildContent() {
@@ -676,16 +696,17 @@ class OverlayService : Service() {
             }
         }
 
-        // --- ОДНА КНОПКА-ТУМБЛЕР ---
+        // --- ОДНА КНОПКА-ТУМБЛЕР (цвета как ты просил) ---
         val toggleBtn = TextView(ctx).apply {
             text = if (isRunning) "СТОП" else "СТАРТ"
-            setTextColor(if (isRunning) COLOR_TEXT else COLOR_MUTED)
+            setTextColor(COLOR_TEXT)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
             setTypeface(typeface, Typeface.BOLD)
             gravity = Gravity.CENTER
             setPadding(dp(16), dp(14), dp(16), dp(14))
+            // СТАРТ (не запущено) — красный, СТОП (запущено) — серый
             background = roundedBg(
-                if (isRunning) COLOR_ACCENT else COLOR_INACTIVE,
+                if (isRunning) COLOR_INACTIVE else COLOR_ACCENT,
                 14
             )
             setOnClickListener {
