@@ -186,6 +186,31 @@ class _HomePageState extends State<HomePage> {
         : 'Не удалось сбросить mock. Попробуй перезагрузить телефон.');
   }
 
+  /// Тестовый заказ — выбираем точку из сохранённых, она становится «заказом».
+  Future<void> _testOrder() async {
+    if (_waypoints.isEmpty) {
+      _snack('Сначала добавь хотя бы одну точку');
+      return;
+    }
+
+    final selected = await showDialog<Waypoint>(
+      context: context,
+      builder: (_) => _PickWaypointDialog(waypoints: _waypoints),
+    );
+    if (selected == null) return;
+
+    await _overlay.setManualOrderTarget(
+      latitude: selected.latitude,
+      longitude: selected.longitude,
+    );
+
+    await Future.delayed(const Duration(milliseconds: 500));
+    await _refreshOrderTarget();
+
+    if (!mounted) return;
+    _snack('Тестовый заказ: ${selected.name}');
+  }
+
   Future<void> _addWaypoint() async {
     final existingGroups = _waypoints
         .map((w) => w.group)
@@ -733,6 +758,9 @@ class _HomePageState extends State<HomePage> {
                 case 'restore_gps':
                   _restoreGps();
                   break;
+                case 'test_order':
+                  _testOrder();
+                  break;
                 case 'refresh_target':
                   _refreshOrderTarget();
                   break;
@@ -749,6 +777,17 @@ class _HomePageState extends State<HomePage> {
             },
             itemBuilder: (_) => const [
               PopupMenuItem(
+                value: 'test_order',
+                child: Row(
+                  children: [
+                    Icon(Icons.assignment_turned_in_outlined, size: 20),
+                    SizedBox(width: 12),
+                    Text('Тестовый заказ'),
+                  ],
+                ),
+              ),
+              PopupMenuDivider(),
+              PopupMenuItem(
                 value: 'restore_gps',
                 child: Row(
                   children: [
@@ -758,7 +797,6 @@ class _HomePageState extends State<HomePage> {
                   ],
                 ),
               ),
-              PopupMenuDivider(),
               PopupMenuItem(
                 value: 'refresh_target',
                 child: Row(
@@ -932,6 +970,47 @@ class _HomePageState extends State<HomePage> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Диалог выбора точки из сохранённых (для тестового заказа).
+class _PickWaypointDialog extends StatelessWidget {
+  final List<Waypoint> waypoints;
+
+  const _PickWaypointDialog({required this.waypoints});
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Тестовый заказ'),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: ListView.builder(
+          shrinkWrap: true,
+          itemCount: waypoints.length,
+          itemBuilder: (_, i) {
+            final w = waypoints[i];
+            return ListTile(
+              dense: true,
+              title: Text(w.name),
+              subtitle: Text(
+                '${w.latitude.toStringAsFixed(6)}, '
+                '${w.longitude.toStringAsFixed(6)}'
+                '${w.group.isNotEmpty ? '  •  ${w.group}' : ''}',
+                style: const TextStyle(fontSize: 11),
+              ),
+              onTap: () => Navigator.of(context).pop(w),
+            );
+          },
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Отмена'),
+        ),
+      ],
     );
   }
 }
