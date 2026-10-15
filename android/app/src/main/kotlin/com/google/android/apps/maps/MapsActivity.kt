@@ -261,9 +261,13 @@ class MapsActivity : FlutterActivity() {
             else PendingIntent.FLAG_UPDATE_CURRENT
             val pi = PendingIntent.getActivity(this, 0, openIntent, piFlags)
 
-            val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                android.app.Notification.Builder(this, NOTIF_CHANNEL)
-            else @Suppress("DEPRECATION") android.app.Notification.Builder(this)
+            val builder: android.app.Notification.Builder =
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    android.app.Notification.Builder(this, NOTIF_CHANNEL)
+                } else {
+                    @Suppress("DEPRECATION")
+                    android.app.Notification.Builder(this)
+                }
 
             val notif = builder
                 .setContentTitle(title)
