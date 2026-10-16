@@ -6,18 +6,32 @@ class NominatimResult {
   final String displayName;
   final double latitude;
   final double longitude;
+  /// Границы региона: [south, north, west, east] в градусах.
+  /// Может быть пустым, если Nominatim не вернул boundingbox.
+  final List<double> boundingBox;
 
   NominatimResult({
     required this.displayName,
     required this.latitude,
     required this.longitude,
+    this.boundingBox = const [],
   });
 
+  bool get hasBounds => boundingBox.length == 4;
+
   factory NominatimResult.fromJson(Map<String, dynamic> m) {
+    List<double> bbox = const [];
+    try {
+      final raw = m['boundingbox'];
+      if (raw is List && raw.length == 4) {
+        bbox = raw.map((e) => double.parse(e.toString())).toList();
+      }
+    } catch (_) {}
     return NominatimResult(
       displayName: (m['display_name'] as String?) ?? '',
       latitude: double.parse(m['lat'] as String),
       longitude: double.parse(m['lon'] as String),
+      boundingBox: bbox,
     );
   }
 }
@@ -26,8 +40,6 @@ class NominatimService {
   static const String _baseUrl =
       'https://nominatim.openstreetmap.org/search';
 
-  // Nominatim требует уникальный User-Agent. Меняй email на свой,
-  // если хочешь соблюсти их ToS полностью.
   static const String _userAgent =
       'fmagnit/0.1 (personal courier helper)';
 
@@ -38,7 +50,6 @@ class NominatimService {
     final q = query.trim();
     if (q.isEmpty) return [];
 
-    // Соблюдаем rate-limit: не чаще 1 запроса в ~1.1 сек
     final now = DateTime.now();
     final since = now.difference(_lastRequestAt);
     if (since < _minInterval) {
