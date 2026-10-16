@@ -8,27 +8,20 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.cachemanager.CacheManager
-import org.osmdroid.tileprovider.modules.SqlTileWriter
+import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.BoundingBox
+import org.osmdroid.views.MapView
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
-/**
- * Foreground-сервис для скачивания тайлов OSM в локальный кэш.
- * Управляется из Dart через MethodChannel.
- *
- * Хранит прогресс в статических переменных и в SharedPreferences:
- * — список скачанных регионов.
- */
 class MapDownloadService : Service() {
 
     companion object {
@@ -47,8 +40,6 @@ class MapDownloadService : Service() {
         @Volatile var currentRegionName: String? = null
 
         private val cancelRequested = AtomicBoolean(false)
-
-        // ---------- API для MethodChannel ----------
 
         fun start(
             ctx: Context,
@@ -109,8 +100,6 @@ class MapDownloadService : Service() {
             )
         }
 
-        // ---------- Список сохранённых регионов ----------
-
         fun listRegions(ctx: Context): List<Map<String, Any?>> {
             val prefs = ctx.applicationContext
                 .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -151,21 +140,6 @@ class MapDownloadService : Service() {
                     if (o.optString("id") != id) newArr.put(o)
                 }
                 prefs.edit().putString(KEY_REGIONS, newArr.toString()).apply()
-
-                // Удаление тайлов по bbox — просто очищаем всю БД кэша.
-                // Точное удаление по bbox в osmdroid сложное, поэтому чистим
-                // весь кэш, если удаляют регион (жёстко, но надёжно).
-                // Оставлено закомментированным — если нужно.
-                // clearTileCache(ctx)
-            } catch (_: Exception) {}
-        }
-
-        fun clearTileCache(ctx: Context) {
-            try {
-                val tiles = File(ctx.cacheDir, "osmdroid/tiles")
-                if (tiles.exists()) {
-                    tiles.deleteRecursively()
-                }
             } catch (_: Exception) {}
         }
 
@@ -216,7 +190,9 @@ class MapDownloadService : Service() {
         }
     }
 
+    private var mapView: MapView? = null
     private var wakeLock: android.os.PowerManager.WakeLock? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -234,116 +210,89 @@ class MapDownloadService : Service() {
             createNotificationChannel()
             startForeground(NOTIFICATION_ID, buildNotification(name))
 
-            // Работу делаем в отдельном потоке — CacheManager синхронный
-            Thread {
-                runDownload(name, south, north, west, east, minZoom, maxZoom)
-            }.start()
+            // MapView должен создаваться в UI-потоке — работаем через mainHandler
+            mainHandler.post {
+                try {
+                    if (mapView == null) {
+                        mapView = MapView(applicationContext).apply {
+                            setTileSource(TileSourceFactory.MAPNIK)
+                            setUseDataConnection(true)
+                        }
+                    }
+                    val mv = mapView ?: throw IllegalStateException("MapView is null")
+
+                    val cacheManager = CacheManager(mv)
+                    val bbox = BoundingBox(north, east, south, west)
+
+                    cacheManager.downloadAreaAsync(
+                        this,
+                        bbox,
+                        minZoom,
+                        maxZoom,
+                        object : CacheManager.CacheManagerCallback {
+                            override fun onTaskComplete() {
+                                finished = true
+                                isRunning = false
+                                lastError = null
+                                saveRegion(
+                                    applicationContext, name,
+                                    south, north, west, east,
+                                    minZoom, maxZoom, downloaded
+                                )
+                                releaseWakeLock()
+                                try { stopForeground(true) } catch (_: Exception) {}
+                                stopSelf()
+                            }
+
+                            override fun onTaskFailed(errors: Int) {
+                                lastError = "Не удалось скачать $errors тайлов"
+                                finished = true
+                                isRunning = false
+                                releaseWakeLock()
+                                try { stopForeground(true) } catch (_: Exception) {}
+                                stopSelf()
+                            }
+
+                            override fun updateProgress(
+                                progress: Int,
+                                currentZoomLevel: Int,
+                                zoomMin: Int,
+                                zoomMax: Int
+                            ) {
+                                downloaded = progress
+                            }
+
+                            override fun downloadStarted() {}
+
+                            override fun setPossibleTilesInArea(t: Int) {
+                                total = t
+                            }
+                        }
+                    )
+                } catch (e: Throwable) {
+                    Log.e(TAG, "Download failed", e)
+                    lastError = e.message ?: "Неизвестная ошибка"
+                    finished = true
+                    isRunning = false
+                    releaseWakeLock()
+                    try { stopForeground(true) } catch (_: Exception) {}
+                    stopSelf()
+                }
+            }
         } catch (e: Throwable) {
             lastError = e.message
             finished = true
             isRunning = false
+            try { stopForeground(true) } catch (_: Exception) {}
             stopSelf()
         }
         return START_NOT_STICKY
     }
 
-    private fun runDownload(
-        name: String,
-        south: Double,
-        north: Double,
-        west: Double,
-        east: Double,
-        minZoom: Int,
-        maxZoom: Int
-    ) {
-        try {
-            val cfg = Configuration.getInstance()
-            val cacheDir = File(cacheDir, "osmdroid/tiles")
-            if (!cacheDir.exists()) cacheDir.mkdirs()
-
-            // Создаём writer (SQLite tile cache)
-            val writer = SqlTileWriter()
-
-            val cacheManager = CacheManager(writer)
-
-            val bbox = BoundingBox(
-                north, east, south, west
-            )
-
-            // Считаем примерное количество тайлов
-            var approxTotal = 0
-            for (z in minZoom..maxZoom) {
-                val n = 1 shl z
-                val x1 = Math.floor((west + 180.0) / 360.0 * n).toInt()
-                val x2 = Math.floor((east + 180.0) / 360.0 * n).toInt()
-                val latRad1 = Math.toRadians(north)
-                val latRad2 = Math.toRadians(south)
-                val y1 = Math.floor(
-                    (1.0 - Math.log(Math.tan(latRad1) + 1.0 / Math.cos(latRad1)) / Math.PI) / 2.0 * n
-                ).toInt()
-                val y2 = Math.floor(
-                    (1.0 - Math.log(Math.tan(latRad2) + 1.0 / Math.cos(latRad2)) / Math.PI) / 2.0 * n
-                ).toInt()
-                approxTotal += (Math.abs(x2 - x1) + 1) * (Math.abs(y2 - y1) + 1)
-            }
-            total = approxTotal
-
-            cacheManager.downloadAreaAsync(
-                this,
-                bbox,
-                minZoom,
-                maxZoom,
-                object : CacheManager.CacheManagerCallback {
-                    override fun onTaskComplete() {
-                        finished = true
-                        isRunning = false
-                        lastError = null
-                        saveRegion(this@MapDownloadService, name, south, north, west, east, minZoom, maxZoom, downloaded)
-                        releaseWakeLock()
-                        stopForeground(true)
-                        stopSelf()
-                    }
-
-                    override fun onTaskFailed(errors: Int) {
-                        lastError = "Не удалось скачать $errors тайлов"
-                        finished = true
-                        isRunning = false
-                        releaseWakeLock()
-                        stopForeground(true)
-                        stopSelf()
-                    }
-
-                    override fun updateProgress(
-                        progress: Int,
-                        currentZoomLevel: Int,
-                        zoomMin: Int,
-                        zoomMax: Int
-                    ) {
-                        downloaded = progress
-                    }
-
-                    override fun downloadStarted() {
-                        // ничего
-                    }
-
-                    override fun setPossibleTilesInArea(t: Int) {
-                        total = t
-                    }
-                }
-            )
-        } catch (e: Throwable) {
-            Log.e(TAG, "Download failed", e)
-            lastError = e.message ?: "Неизвестная ошибка"
-            finished = true
-            isRunning = false
-            releaseWakeLock()
-            stopForeground(true)
-            stopSelf()
-        }
-    }
-
     override fun onDestroy() {
         isRunning = false
+        try { mapView?.onDetach() } catch (_: Exception) {}
+        mapView = null
         releaseWakeLock()
         super.onDestroy()
     }
