@@ -1214,4 +1214,14 @@ class _WaypointDialogState extends State<_WaypointDialog> {
       ),
       actions: [
         TextButton(
-          on
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          onPressed: _save,
+          child: const Text('Сохранить'),
+        ),
+      ],
+    );
+  }
+}
