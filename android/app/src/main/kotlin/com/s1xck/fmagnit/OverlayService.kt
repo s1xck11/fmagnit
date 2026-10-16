@@ -42,7 +42,9 @@ class OverlayService : Service() {
         const val NOTIFICATION_ID = 4201
         const val CHANNEL_ID = "fmagnit_overlay"
 
-        private const val COLOR_BG = 0xEE0A0A0A.toInt()
+        // Палитра под скрин Магнита
+        private const val COLOR_BG = 0xFF0F0F0F.toInt()          // непрозрачный чёрный
+        private const val COLOR_HEADER_BG = 0xFF0F0F0F.toInt()   // шапка
         private const val COLOR_ACCENT = 0xFFE30613.toInt()
         private const val COLOR_TEXT = 0xFFFFFFFF.toInt()
         private const val COLOR_MUTED = 0xFF9E9E9E.toInt()
@@ -63,7 +65,6 @@ class OverlayService : Service() {
         const val EXTRA_ORDER_LON = "order_lon"
 
         private const val TILE_CACHE_BYTES = 100L * 1024L * 1024L
-        private const val MINI_MAP_RECREATE_DELAY = 300L
 
         @Volatile var currentPointsJson: String = "[]"
         @Volatile var currentActiveId: String? = null
@@ -73,6 +74,7 @@ class OverlayService : Service() {
     private var rootView: View? = null
     private var layoutParams: WindowManager.LayoutParams? = null
 
+    // expanded — раскрыт ли оверлей в состояние B (точки + настройки)
     private var expanded = false
     private var isRunning = false
 
@@ -85,19 +87,9 @@ class OverlayService : Service() {
 
     private var orderContainer: LinearLayout? = null
 
-    private var miniMap: MapView? = null
-    private var miniMapWrapper: FrameLayout? = null
-
     private var fullMap: MapView? = null
     private var fullMapWrapper: View? = null
     private var fullMapLayoutParams: WindowManager.LayoutParams? = null
-
-    // Координаты, для которых сейчас построена мини-карта
-    private var miniMapLat: Double = Double.NaN
-    private var miniMapLon: Double = Double.NaN
-
-    // Runnable отложенного создания мини-карты
-    private var pendingMiniMapBuild: Runnable? = null
 
     private var wakeLock: PowerManager.WakeLock? = null
 
@@ -165,7 +157,7 @@ class OverlayService : Service() {
                 val lon = intent.getDoubleExtra(EXTRA_ORDER_LON, Double.NaN)
                 if (!lat.isNaN() && !lon.isNaN()) {
                     OrderTargetStore.save(this, lat, lon)
-                    expanded = true
+                    // Заказ открывается поверх остального — раскрываем «заказ»
                     handler.post { rebuildContent() }
                 }
             }
@@ -179,10 +171,7 @@ class OverlayService : Service() {
 
     override fun onDestroy() {
         OverlayBridge.onOverlayStateChanged {}
-        pendingMiniMapBuild?.let { handler.removeCallbacks(it) }
-        pendingMiniMapBuild = null
         closeFullMap()
-        destroyMiniMap()
         try { rootView?.let { windowManager?.removeView(it) } } catch (_: Exception) {}
         rootView = null
         OverlayBridge.setOverlayRunning(false)
@@ -254,32 +243,41 @@ class OverlayService : Service() {
         return d
     }
 
+    private fun pillBg(color: Int): GradientDrawable {
+        val d = GradientDrawable()
+        d.shape = GradientDrawable.RECTANGLE
+        d.cornerRadius = dp(24).toFloat()
+        d.setColor(color)
+        return d
+    }
+
     private fun buildOverlayView() {
         val ctx = this
 
         val root = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(10), dp(16), dp(10))
-            background = roundedBg(COLOR_BG, 16)
+            setPadding(dp(20), dp(16), dp(20), dp(16))
+            background = roundedBg(COLOR_BG, 0) // непрозрачный
         }
 
+        // ===== Шапка =====
         val header = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            minimumHeight = dp(40)
+            minimumHeight = dp(56)
         }
 
         dotView = TextView(ctx).apply {
             text = "●"
             setTextColor(COLOR_DOT_IDLE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            setPadding(0, 0, dp(10), 0)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setPadding(0, 0, dp(12), 0)
         }
 
         val title = TextView(ctx).apply {
             text = "fmagnit"
             setTextColor(COLOR_TEXT)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
             setTypeface(typeface, Typeface.BOLD)
             layoutParams = LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
@@ -289,14 +287,15 @@ class OverlayService : Service() {
         activeLabel = TextView(ctx).apply {
             text = currentActiveNameOrPlaceholder()
             setTextColor(COLOR_MUTED)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setPadding(0, 0, dp(12), 0)
         }
 
         arrowView = TextView(ctx).apply {
-            text = "▲"
+            text = "▼"
             setTextColor(COLOR_TEXT)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+            setPadding(dp(8), dp(4), dp(8), dp(4))
         }
 
         header.addView(dotView)
@@ -305,12 +304,14 @@ class OverlayService : Service() {
         header.addView(arrowView)
         root.addView(header)
 
+        // ===== Секция заказа (карта / кнопка ОТКРЫТЬ КАРТУ + ПЕРЕЙТИ / ЗАКРЫТЬ) =====
         orderContainer = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
         }
         root.addView(orderContainer)
 
+        // ===== Основной раскрытый контент (точки + СТАРТ) =====
         contentContainer = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
@@ -330,10 +331,10 @@ class OverlayService : Service() {
             WindowManager.LayoutParams.WRAP_CONTENT,
             type,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-            PixelFormat.TRANSLUCENT
+            PixelFormat.OPAQUE // непрозрачный
         ).apply {
-            gravity = Gravity.BOTTOM or Gravity.START
-            y = dp(80)
+            gravity = Gravity.TOP or Gravity.START
+            y = 0
             x = 0
         }
 
@@ -369,7 +370,9 @@ class OverlayService : Service() {
                     val dy = event.rawY - initialTouchY
                     if (Math.abs(dy) > 10) {
                         moved = true
-                        layoutParams?.y = initialY - dy.toInt()
+                        // Ограничиваем движение сверху — тянем вниз до половины экрана
+                        val newY = (initialY + dy.toInt()).coerceAtLeast(0)
+                        layoutParams?.y = newY
                         try { windowManager?.updateViewLayout(rootView, layoutParams) } catch (_: Exception) {}
                     }
                     true
@@ -435,82 +438,10 @@ class OverlayService : Service() {
         } catch (_: Exception) {}
     }
 
-    private fun destroyMiniMap() {
-        pendingMiniMapBuild?.let { handler.removeCallbacks(it) }
-        pendingMiniMapBuild = null
-
-        val oldMap = miniMap
-        val oldWrapper = miniMapWrapper
-
-        miniMap = null
-        miniMapWrapper = null
-        miniMapLat = Double.NaN
-        miniMapLon = Double.NaN
-
-        try {
-            oldWrapper?.removeAllViews()
-        } catch (_: Exception) {}
-
-        // onDetach в фоне — чтобы следующая карта создалась после полного отсоединения
-        handler.postDelayed({
-            try { oldMap?.onDetach() } catch (_: Exception) {}
-        }, 200)
-    }
-
     /**
-     * Отложенное создание мини-карты. Ждём MINI_MAP_RECREATE_DELAY мс,
-     * чтобы предыдущая карта успела полностью отцепиться.
+     * Секция заказа: координаты + кнопка ОТКРЫТЬ КАРТУ + ПЕРЕЙТИ/ЗАКРЫТЬ.
+     * Появляется при наличии заказа, ВСЕГДА (при любой expanded).
      */
-    private fun scheduleMiniMapBuild(lat: Double, lon: Double, onReady: (FrameLayout) -> Unit) {
-        pendingMiniMapBuild?.let { handler.removeCallbacks(it) }
-
-        val r = Runnable {
-            val ctx = this
-            val wrapper = FrameLayout(ctx).apply {
-                background = roundedBg(COLOR_INACTIVE, 12)
-            }
-
-            val map = createMapView()
-            addMarker(map, lat, lon)
-            wrapper.addView(map, FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            ))
-
-            val tapLayer = View(ctx).apply {
-                isClickable = true
-                setBackgroundColor(0x00000000)
-                setOnClickListener {
-                    val order = OrderTargetStore.load(this@OverlayService)
-                    if (order != null) {
-                        // СВОРАЧИВАЕМ оверлей и открываем полную карту
-                        openFullMap(order.first, order.second)
-                    }
-                }
-            }
-            wrapper.addView(tapLayer, FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            ))
-
-            miniMap = map
-            miniMapWrapper = wrapper
-            miniMapLat = lat
-            miniMapLon = lon
-
-            handler.postDelayed({
-                try {
-                    map.onResume()
-                    map.invalidate()
-                } catch (_: Exception) {}
-            }, 300)
-
-            onReady(wrapper)
-        }
-        pendingMiniMapBuild = r
-        handler.postDelayed(r, MINI_MAP_RECREATE_DELAY)
-    }
-
     private fun rebuildOrderBlock() {
         val ctx = this
         val c = orderContainer ?: return
@@ -519,70 +450,54 @@ class OverlayService : Service() {
         val order = OrderTargetStore.load(this)
         if (order == null) {
             c.visibility = View.GONE
-            destroyMiniMap()
             return
         }
+        c.visibility = View.VISIBLE
 
         val (lat, lon) = order
 
         c.addView(View(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(1)
-            ).also { it.topMargin = dp(10); it.bottomMargin = dp(10) }
+            ).also { it.topMargin = dp(12); it.bottomMargin = dp(12) }
             setBackgroundColor(0x22FFFFFF)
         })
 
         c.addView(TextView(ctx).apply {
             text = "Заказ клиента"
             setTextColor(COLOR_ACCENT)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setTypeface(typeface, Typeface.BOLD)
-            setPadding(0, 0, 0, dp(4))
+            setPadding(0, 0, 0, dp(6))
         })
 
         c.addView(TextView(ctx).apply {
             text = String.format(Locale.US, "%.6f, %.6f", lat, lon)
             setTextColor(COLOR_TEXT)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            setPadding(0, 0, 0, dp(8))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setPadding(0, 0, 0, dp(12))
         })
 
-        // Контейнер под карту — фиксированного размера, чтобы layout не прыгал
-        val mapSlot = FrameLayout(ctx).apply {
-            background = roundedBg(COLOR_INACTIVE, 12)
-        }
-        val slotLp = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(160)
-        ).also { it.bottomMargin = dp(10) }
-        c.addView(mapSlot, slotLp)
-
-        // Если координаты те же и карта живая — переиспользуем
-        val sameCoords = !miniMapLat.isNaN() && !miniMapLon.isNaN() &&
-                Math.abs(miniMapLat - lat) < 0.000001 &&
-                Math.abs(miniMapLon - lon) < 0.000001
-
-        val existingWrapper = miniMapWrapper
-        val existingMap = miniMap
-
-        if (existingWrapper != null && existingMap != null && sameCoords) {
-            // Отвязываем от старого родителя (если был) и ставим в новый slot
-            try { (existingWrapper.parent as? ViewGroup)?.removeView(existingWrapper) } catch (_: Exception) {}
-            mapSlot.addView(existingWrapper, FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            ))
-        } else {
-            // Нужно пересоздать
-            destroyMiniMap()
-            scheduleMiniMapBuild(lat, lon) { wrapper ->
-                try { (wrapper.parent as? ViewGroup)?.removeView(wrapper) } catch (_: Exception) {}
-                mapSlot.addView(wrapper, FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT
-                ))
+        // Кнопка ОТКРЫТЬ КАРТУ
+        val openMapBtn = TextView(ctx).apply {
+            text = "ОТКРЫТЬ КАРТУ"
+            setTextColor(COLOR_TEXT)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            background = roundedBg(COLOR_INACTIVE, 14)
+            setOnClickListener {
+                openFullMap(lat, lon)
             }
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).also { it.bottomMargin = dp(8) }
         }
+        c.addView(openMapBtn)
 
+        // ПЕРЕЙТИ + ЗАКРЫТЬ
         val row = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -591,10 +506,10 @@ class OverlayService : Service() {
         val goBtn = TextView(ctx).apply {
             text = "ПЕРЕЙТИ"
             setTextColor(COLOR_TEXT)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
             setTypeface(typeface, Typeface.BOLD)
             gravity = Gravity.CENTER
-            setPadding(dp(14), dp(12), dp(14), dp(12))
+            setPadding(dp(14), dp(14), dp(14), dp(14))
             background = roundedBg(COLOR_ACCENT, 14)
             setOnClickListener {
                 val b = Intent(ACTION_ORDER_START_MOCK)
@@ -614,14 +529,15 @@ class OverlayService : Service() {
         val closeBtn = TextView(ctx).apply {
             text = "ЗАКРЫТЬ"
             setTextColor(COLOR_TEXT)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
             setTypeface(typeface, Typeface.BOLD)
             gravity = Gravity.CENTER
-            setPadding(dp(14), dp(12), dp(14), dp(12))
+            setPadding(dp(14), dp(14), dp(14), dp(14))
             background = roundedBg(COLOR_INACTIVE, 14)
             setOnClickListener {
                 OrderTargetStore.clear(this@OverlayService)
-                destroyMiniMap()
+                // Полное сворачивание в состояние A
+                expanded = false
                 rebuildContent()
             }
             layoutParams = LinearLayout.LayoutParams(
@@ -637,10 +553,11 @@ class OverlayService : Service() {
     private fun openFullMap(lat: Double, lon: Double) {
         closeFullMap()
 
-        // СВОРАЧИВАЕМ оверлей ПЕРЕД открытием полной карты
+        // Сворачиваем оверлей до состояния A — видна только шапка
         expanded = false
-        // rebuildContent скроет orderContainer и contentContainer — оверлей станет шапкой
-        rebuildContent()
+        orderContainer?.visibility = View.GONE
+        contentContainer?.visibility = View.GONE
+        arrowView?.text = "▼"
 
         val ctx = this
 
@@ -694,7 +611,7 @@ class OverlayService : Service() {
         fullMapLayoutParams = WindowManager.LayoutParams(
             w, h, type,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-            PixelFormat.TRANSLUCENT
+            PixelFormat.OPAQUE
         ).apply {
             gravity = Gravity.CENTER
         }
@@ -721,88 +638,98 @@ class OverlayService : Service() {
         val container = contentContainer ?: return
         container.removeAllViews()
 
-        // Контейнер заказа виден ТОЛЬКО когда оверлей раскрыт
-        orderContainer?.visibility = if (expanded) View.VISIBLE else View.GONE
-        container.visibility = if (expanded) View.VISIBLE else View.GONE
-        arrowView?.text = if (expanded) "▼" else "▲"
-        activeLabel?.text = currentActiveNameOrPlaceholder()
-        applyDotColor()
+        // Секция заказа показывается, если заказ есть (и оверлей раскрыт ИЛИ это первое появление заказа)
+        val hasOrder = OrderTargetStore.load(this) != null
+        rebuildOrderBlock()
+
+        // Состояние A: expanded = false и нет заказа — только шапка
+        // Состояние B: expanded = true — точки + СТАРТ/СТОП
+        // Если заказ пришёл и expanded = false — показываем секцию заказа, но не список точек
 
         if (expanded) {
-            rebuildOrderBlock()
-        }
+            // Полностью раскрыт: список точек + СТАРТ/СТОП
+            orderContainer?.visibility = if (hasOrder) View.VISIBLE else View.GONE
+            container.visibility = View.VISIBLE
+            arrowView?.text = "▼"
+            activeLabel?.text = currentActiveNameOrPlaceholder()
+            applyDotColor()
 
-        if (!expanded) return
-
-        container.addView(View(ctx).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(1)
-            ).also { it.topMargin = dp(12); it.bottomMargin = dp(8) }
-            setBackgroundColor(0x22FFFFFF)
-        })
-
-        val points = parsePoints(currentPointsJson)
-        if (points.isEmpty()) {
-            container.addView(TextView(ctx).apply {
-                text = "Нет точек. Добавь в fmagnit."
-                setTextColor(COLOR_MUTED)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setPadding(0, dp(6), 0, dp(6))
+            container.addView(View(ctx).apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(1)
+                ).also { it.topMargin = dp(12); it.bottomMargin = dp(8) }
+                setBackgroundColor(0x22FFFFFF)
             })
+
+            val points = parsePoints(currentPointsJson)
+            if (points.isEmpty()) {
+                container.addView(TextView(ctx).apply {
+                    text = "Нет точек. Добавь в fmagnit."
+                    setTextColor(COLOR_MUTED)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                    setPadding(0, dp(6), 0, dp(6))
+                })
+            } else {
+                points.forEach { (id, name) ->
+                    val isActive = id == currentActiveId
+                    val row = TextView(ctx).apply {
+                        text = (if (isActive) "● " else "○ ") + name
+                        setTextColor(if (isActive) COLOR_ACCENT else COLOR_TEXT)
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+                        setPadding(dp(4), dp(12), dp(4), dp(12))
+                        setOnClickListener {
+                            currentActiveId = id
+                            OverlayPrefs.saveActiveId(this@OverlayService, id)
+                            activeLabel?.text = name
+                            rebuildContent()
+                        }
+                    }
+                    container.addView(row)
+                }
+            }
+
+            val toggleBtn = TextView(ctx).apply {
+                text = if (isRunning) "СТОП" else "СТАРТ"
+                setTextColor(COLOR_TEXT)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+                setTypeface(typeface, Typeface.BOLD)
+                gravity = Gravity.CENTER
+                setPadding(dp(16), dp(14), dp(16), dp(14))
+                background = roundedBg(
+                    if (isRunning) COLOR_INACTIVE else COLOR_ACCENT,
+                    14
+                )
+                setOnClickListener {
+                    if (isRunning) {
+                        isRunning = false
+                        OverlayPrefs.saveRunning(this@OverlayService, false)
+                        sendBroadcast(Intent(ACTION_POINT_STOP).apply { setPackage(packageName) })
+                    } else {
+                        val id = currentActiveId
+                        if (id != null) {
+                            isRunning = true
+                            OverlayPrefs.saveRunning(this@OverlayService, true)
+                            sendBroadcast(Intent(ACTION_POINT_START).apply {
+                                setPackage(packageName); putExtra("id", id)
+                            })
+                        }
+                    }
+                    rebuildContent()
+                }
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).also { it.topMargin = dp(12) }
+            }
+            container.addView(toggleBtn)
         } else {
-            points.forEach { (id, name) ->
-                val isActive = id == currentActiveId
-                val row = TextView(ctx).apply {
-                    text = (if (isActive) "● " else "○ ") + name
-                    setTextColor(if (isActive) COLOR_ACCENT else COLOR_TEXT)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-                    setPadding(dp(4), dp(12), dp(4), dp(12))
-                    setOnClickListener {
-                        currentActiveId = id
-                        OverlayPrefs.saveActiveId(this@OverlayService, id)
-                        activeLabel?.text = name
-                        rebuildContent()
-                    }
-                }
-                container.addView(row)
-            }
+            // Свёрнуто (состояние A) — только шапка. Но если есть заказ — показываем секцию заказа
+            orderContainer?.visibility = if (hasOrder) View.VISIBLE else View.GONE
+            container.visibility = View.GONE
+            arrowView?.text = "▼"
+            activeLabel?.text = currentActiveNameOrPlaceholder()
+            applyDotColor()
         }
-
-        val toggleBtn = TextView(ctx).apply {
-            text = if (isRunning) "СТОП" else "СТАРТ"
-            setTextColor(COLOR_TEXT)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-            setTypeface(typeface, Typeface.BOLD)
-            gravity = Gravity.CENTER
-            setPadding(dp(16), dp(14), dp(16), dp(14))
-            background = roundedBg(
-                if (isRunning) COLOR_INACTIVE else COLOR_ACCENT,
-                14
-            )
-            setOnClickListener {
-                if (isRunning) {
-                    isRunning = false
-                    OverlayPrefs.saveRunning(this@OverlayService, false)
-                    sendBroadcast(Intent(ACTION_POINT_STOP).apply { setPackage(packageName) })
-                } else {
-                    val id = currentActiveId
-                    if (id != null) {
-                        isRunning = true
-                        OverlayPrefs.saveRunning(this@OverlayService, true)
-                        sendBroadcast(Intent(ACTION_POINT_START).apply {
-                            setPackage(packageName); putExtra("id", id)
-                        })
-                    }
-                }
-                rebuildContent()
-            }
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).also { it.topMargin = dp(12) }
-        }
-
-        container.addView(toggleBtn)
     }
 
     private fun parsePoints(json: String): List<Pair<String, String>> {
