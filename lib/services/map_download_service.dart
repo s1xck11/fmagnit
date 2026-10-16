@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/services.dart';
 
@@ -134,7 +135,6 @@ class MapDownloadService {
   }
 
   /// Оценка количества тайлов для предупреждения пользователя.
-  /// Возвращает приблизительное число тайлов на основе bbox и зумов.
   static int estimateTiles({
     required double south,
     required double north,
@@ -146,28 +146,34 @@ class MapDownloadService {
     int total = 0;
     for (int z = minZoom; z <= maxZoom; z++) {
       final n = 1 << z;
+
       final x1 = ((west + 180.0) / 360.0 * n).floor();
       final x2 = ((east + 180.0) / 360.0 * n).floor();
-      final latRad1 = north * 3.14159265 / 180.0;
-      final latRad2 = south * 3.14159265 / 180.0;
+
+      final latRad1 = north * math.pi / 180.0;
+      final latRad2 = south * math.pi / 180.0;
+
       final y1 = ((1.0 -
-                  (latRad1.tan() + 1.0 / latRad1.cos()).let((v) => v) / 3.14159265) /
+                  math.log(
+                        math.tan(latRad1) + 1.0 / math.cos(latRad1),
+                      ) /
+                      math.pi) /
               2.0 *
               n)
           .floor();
       final y2 = ((1.0 -
-                  (latRad2.tan() + 1.0 / latRad2.cos()) / 3.14159265) /
+                  math.log(
+                        math.tan(latRad2) + 1.0 / math.cos(latRad2),
+                      ) /
+                      math.pi) /
               2.0 *
               n)
           .floor();
+
       final dx = (x2 - x1).abs() + 1;
       final dy = (y2 - y1).abs() + 1;
       total += dx * dy;
     }
     return total;
   }
-}
-
-extension _Let<T> on T {
-  R let<R>(R Function(T) block) => block(this);
 }
