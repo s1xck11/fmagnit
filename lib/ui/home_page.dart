@@ -13,6 +13,7 @@ import '../storage/waypoint_storage.dart';
 import 'address_search_dialog.dart';
 import 'health_page.dart';
 import 'import_export_dialogs.dart';
+import 'map_download_page.dart';
 import 'sort_menu.dart';
 
 class HomePage extends StatefulWidget {
@@ -188,6 +189,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       MaterialPageRoute(builder: (_) => const HealthPage()),
     );
     await _refreshPermissions();
+  }
+
+  Future<void> _openMapDownload() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const MapDownloadPage()),
+    );
   }
 
   Future<void> _restoreGps() async {
@@ -788,6 +795,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 case 'test_order':
                   _testOrder();
                   break;
+                case 'map_download':
+                  _openMapDownload();
+                  break;
                 case 'restore_gps':
                   _restoreGps();
                   break;
@@ -816,6 +826,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     Icon(Icons.assignment_turned_in_outlined, size: 20),
                     SizedBox(width: 12),
                     Text('Тестовый заказ'),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'map_download',
+                child: Row(
+                  children: [
+                    Icon(Icons.download_for_offline_outlined, size: 20),
+                    SizedBox(width: 12),
+                    Text('Загрузка карт'),
                   ],
                 ),
               ),
@@ -892,7 +912,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             )
           : Column(
               children: [
-                // --- Секция Управление ---
                 Padding(
                   padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
                   child: Container(
@@ -937,7 +956,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 ),
                 _orderTargetBanner(),
                 _crashBanner(),
-                // --- Секция Точки ---
                 Padding(
                   padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
                   child: Row(
@@ -1196,14 +1214,4 @@ class _WaypointDialogState extends State<_WaypointDialog> {
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Отмена'),
-        ),
-        FilledButton(
-          onPressed: _save,
-          child: const Text('Сохранить'),
-        ),
-      ],
-    );
-  }
-}
+          on
