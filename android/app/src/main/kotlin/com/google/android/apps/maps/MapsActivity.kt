@@ -512,3 +512,183 @@ class MapsActivity : FlutterActivity() {
         val metersPerDegLat = 111_320.0
         val metersPerDegLon = 111_320.0 * cos(Math.toRadians(baseLat))
         displayLat = baseLat + dy / metersPerDegLat
+        displayLon = baseLon + dx / metersPerDegLon
+    }
+
+    private fun pushLocation() {
+        val lm = locationManager ?: return
+        if (!isMockRunning) return
+        applyJitter()
+        val jitterAcc = baseAcc + Random.nextDouble(-3.0, 3.0)
+        val acc = jitterAcc.coerceAtLeast(1.0)
+        val speed = Random.nextFloat() * 0.4f
+        val bearing = Random.nextFloat() * 360f
+        try {
+            for (p in providers) {
+                val loc = buildLocation(p, displayLat, displayLon, acc, baseAlt, speed, bearing)
+                try { lm.setTestProviderLocation(p, loc) } catch (_: Exception) {}
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun startMock(lat: Double, lon: Double, acc: Double, alt: Double, intervalMs: Long): Boolean {
+        return try {
+            baseLat = lat
+            baseLon = lon
+            baseAcc = acc
+            baseAlt = alt
+            displayLat = lat
+            displayLon = lon
+            for (p in providers) ensureProvider(p)
+            isMockRunning = true
+            pushLocation()
+            startPushLoop(intervalMs)
+            true
+        } catch (_: Exception) { false }
+    }
+
+    private fun startPushLoop(baseIntervalMs: Long) {
+        stopPushLoop()
+        val r = object : Runnable {
+            override fun run() {
+                pushLocation()
+                val jitter = baseIntervalMs * (0.7 + Random.nextDouble() * 0.6)
+                handler?.postDelayed(this, jitter.toLong())
+            }
+        }
+        pushRunnable = r
+        handler?.postDelayed(r, baseIntervalMs)
+    }
+
+    private fun stopPushLoop() {
+        pushRunnable?.let { handler?.removeCallbacks(it) }
+        pushRunnable = null
+    }
+
+    private fun updateMock(lat: Double, lon: Double, acc: Double, alt: Double): Boolean {
+        return try {
+            baseLat = lat
+            baseLon = lon
+            baseAcc = acc
+            baseAlt = alt
+            displayLat = lat
+            displayLon = lon
+            pushLocation()
+            true
+        } catch (_: Exception) { false }
+    }
+
+    private fun stopMock(): Boolean {
+        return try {
+            isMockRunning = false
+            stopPushLoop()
+            Thread.sleep(50)
+            for (p in providers) {
+                try { locationManager?.setTestProviderEnabled(p, false) } catch (_: Exception) {}
+                try { locationManager?.removeTestProvider(p) } catch (_: Exception) {}
+            }
+            Thread.sleep(150)
+            for (p in providers) {
+                try { locationManager?.removeTestProvider(p) } catch (_: Exception) {}
+            }
+            true
+        } catch (_: Exception) { false }
+    }
+
+    private fun forceResetMock(): Boolean {
+        return try {
+            isMockRunning = false
+            stopPushLoop()
+            for (p in providers) {
+                try { locationManager?.setTestProviderEnabled(p, false) } catch (_: Exception) {}
+                try { locationManager?.removeTestProvider(p) } catch (_: Exception) {}
+            }
+            Thread.sleep(200)
+            for (p in providers) {
+                try { locationManager?.removeTestProvider(p) } catch (_: Exception) {}
+            }
+            true
+        } catch (_: Exception) { false }
+    }
+
+    private fun requestOverlayPermission() {
+        try {
+            val intent = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName")
+            )
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(intent)
+        } catch (_: Exception) {}
+    }
+
+    private fun isAccessibilityServiceEnabled(): Boolean {
+        val service = "$packageName/${MainAccessibilityService::class.java.name}"
+        val enabled = Settings.Secure.getString(
+            contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: return false
+        return enabled.split(':').any { it.equals(service, ignoreCase = true) }
+    }
+
+    private fun openAccessibilitySettings() {
+        try {
+            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(intent)
+        } catch (_: Exception) {}
+    }
+
+    private fun openUsageAccessSettings() {
+        try {
+            val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(intent)
+        } catch (_: Exception) {
+            try {
+                val intent = Intent(Settings.ACTION_SETTINGS)
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent)
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun startOverlayService() {
+        if (OverlayBridge.isOverlayServiceRunning) {
+            updateOverlayPoints(OverlayService.currentPointsJson, OverlayService.currentActiveId)
+            return
+        }
+        OverlayPrefs.saveServiceOn(this, true)
+        val intent = Intent(this, OverlayService::class.java).apply {
+            setAction(OverlayService.ACTION_START)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
+    }
+
+    private fun stopOverlayService() {
+        OverlayPrefs.saveServiceOn(this, false)
+        val intent = Intent(this, OverlayService::class.java).apply {
+            setAction(OverlayService.ACTION_STOP)
+        }
+        startService(intent)
+    }
+
+    private fun updateOverlayPoints(json: String, activeId: String?) {
+        OverlayService.currentPointsJson = json
+        if (activeId != null) OverlayService.currentActiveId = activeId
+        OverlayPrefs.savePoints(this, json)
+        if (activeId != null) OverlayPrefs.saveActiveId(this, activeId)
+        val intent = Intent(this, OverlayService::class.java).apply {
+            setAction(OverlayService.ACTION_UPDATE_POINTS)
+            putExtra(OverlayService.EXTRA_POINTS_JSON, json)
+            if (activeId != null) putExtra(OverlayService.EXTRA_ACTIVE_ID, activeId)
+        }
+        try { startService(intent) } catch (_: Exception) {}
+    }
+}
+
+const val ACTION_ORDER_TARGET_UPDATED = "com.s1xck.fmagnit.ORDER_TARGET_UPDATED"
+const val ACTION_ORDER_START_MOCK = "com.s1xck.fmagnit.ORDER_START_MOCK"
