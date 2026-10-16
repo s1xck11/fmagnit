@@ -12,6 +12,7 @@ import android.location.Location
 import android.location.LocationManager
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -70,6 +71,24 @@ class MapsActivity : FlutterActivity() {
     private var mockChannel: MethodChannel? = null
 
     private var lastHandledUri: String? = null
+    private var isTransparentLaunch = false
+
+    /**
+     * ВАЖНО: этот метод вызывается ДО super.onCreate().
+     * Смотрим action интента. Если это VIEW (перехват от Магнита) — ставим
+     * прозрачную тему, чтобы пользователь не видел перехода.
+     */
+    override fun onCreate(savedInstanceState: Bundle?) {
+        try {
+            val action = intent?.action
+            val data = intent?.data
+            if (action == Intent.ACTION_VIEW && data != null) {
+                isTransparentLaunch = true
+                setTheme(android.R.style.Theme_Translucent_NoTitleBar)
+            }
+        } catch (_: Exception) {}
+        super.onCreate(savedInstanceState)
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         try {
@@ -80,12 +99,9 @@ class MapsActivity : FlutterActivity() {
         }
 
         try {
-            // Инициализация osmdroid без androidx.preference
             try {
                 Configuration.getInstance().userAgentValue = packageName
-            } catch (e: Throwable) {
-                CrashLogger.log(applicationContext, "osmdroid_init", e)
-            }
+            } catch (_: Throwable) {}
 
             locationManager =
                 applicationContext.getSystemService(Context.LOCATION_SERVICE) as LocationManager
@@ -131,12 +147,8 @@ class MapsActivity : FlutterActivity() {
                                 ))
                             }
                         }
-                        "getLastOrderTarget" -> {
-                            result.success(OrderTargetStore.loadLast(this))
-                        }
-                        "getLastCrash" -> {
-                            result.success(CrashLogger.load(this))
-                        }
+                        "getLastOrderTarget" -> result.success(OrderTargetStore.loadLast(this))
+                        "getLastCrash" -> result.success(CrashLogger.load(this))
                         "clearCrash" -> {
                             CrashLogger.clear(this)
                             result.success(true)
@@ -238,9 +250,10 @@ class MapsActivity : FlutterActivity() {
 
     override fun onResume() {
         super.onResume()
+        val delay = if (isTransparentLaunch) 200L else 500L
         handler?.postDelayed({
             handleIncomingIntent(intent)
-        }, 500)
+        }, delay)
     }
 
     private fun handleIncomingIntent(intent: Intent?) {
@@ -248,31 +261,18 @@ class MapsActivity : FlutterActivity() {
             val action = intent?.action
             val data: Uri? = intent?.data
 
-            CrashLogger.logMessage(
-                applicationContext,
-                "intent_received",
-                "action=$action\ndata=$data\nscheme=${data?.scheme}\nssp=${data?.schemeSpecificPart}"
-            )
-
-            if (data == null) return
+            // Если это обычный запуск через иконку — ничего не делаем
+            if (action == Intent.ACTION_MAIN || data == null) {
+                return
+            }
 
             val uriStr = data.toString()
             if (uriStr == lastHandledUri) return
 
             val parsed = parseCoordinates(data)
             if (parsed == null) {
-                CrashLogger.logMessage(
-                    applicationContext,
-                    "parse_failed",
-                    "Could not parse: $data"
-                )
-                showToast("fmagnit: не удалось распарсить координаты")
-                showNotification(
-                    "fmagnit: координаты не распознаны",
-                    data.toString()
-                )
                 lastHandledUri = uriStr
-                finish()
+                finishSafely()
                 return
             }
 
@@ -280,12 +280,6 @@ class MapsActivity : FlutterActivity() {
             lastHandledUri = uriStr
 
             OrderTargetStore.save(applicationContext, lat, lon, data.toString())
-
-            showToast("fmagnit получил: %.6f, %.6f".format(lat, lon))
-            showNotification(
-                "fmagnit получил заказ",
-                "%.6f, %.6f".format(lat, lon)
-            )
 
             if (OverlayBridge.isOverlayServiceRunning) {
                 val svc = Intent(this, OverlayService::class.java).apply {
@@ -302,9 +296,19 @@ class MapsActivity : FlutterActivity() {
             bcast.putExtra("lon", lon)
             sendBroadcast(bcast)
 
-            handler?.postDelayed({ finish() }, 800)
+            finishSafely()
         } catch (e: Throwable) {
             CrashLogger.log(applicationContext, "handleIncomingIntent_CRASH", e)
+            finishSafely()
+        }
+    }
+
+    private fun finishSafely() {
+        // Если запуск через VIEW — активность нужно закрыть сразу
+        if (isTransparentLaunch) {
+            try { finish() } catch (_: Exception) {}
+        } else {
+            // Не закрываем при обычном запуске
         }
     }
 
@@ -322,52 +326,6 @@ class MapsActivity : FlutterActivity() {
         } catch (e: Throwable) {
             CrashLogger.log(applicationContext, "setManualOrderTarget", e)
         }
-    }
-
-    private fun showToast(msg: String) {
-        try {
-            Toast.makeText(applicationContext, msg, Toast.LENGTH_LONG).show()
-        } catch (_: Exception) {}
-    }
-
-    private fun showNotification(title: String, text: String) {
-        try {
-            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                if (nm.getNotificationChannel(NOTIF_CHANNEL) == null) {
-                    val ch = NotificationChannel(
-                        NOTIF_CHANNEL, "fmagnit intent debug",
-                        NotificationManager.IMPORTANCE_DEFAULT
-                    )
-                    nm.createNotificationChannel(ch)
-                }
-            }
-            val openIntent = Intent(this, MapsActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            }
-            val piFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-            else PendingIntent.FLAG_UPDATE_CURRENT
-            val pi = PendingIntent.getActivity(this, 0, openIntent, piFlags)
-
-            val builder: android.app.Notification.Builder =
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    android.app.Notification.Builder(this, NOTIF_CHANNEL)
-                } else {
-                    @Suppress("DEPRECATION")
-                    android.app.Notification.Builder(this)
-                }
-
-            val notif = builder
-                .setContentTitle(title)
-                .setContentText(text)
-                .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-                .setContentIntent(pi)
-                .setAutoCancel(true)
-                .build()
-
-            nm.notify(NOTIF_ID, notif)
-        } catch (_: Exception) {}
     }
 
     private fun parseCoordinates(uri: Uri): Pair<Double, Double>? {
