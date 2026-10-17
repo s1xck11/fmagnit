@@ -42,21 +42,19 @@ class OverlayService : Service() {
         const val NOTIFICATION_ID = 4201
         const val CHANNEL_ID = "fmagnit_overlay"
 
-        // ==== ЦВЕТА (по HEX от тебя) ====
-        private const val COLOR_HEADER_BG = 0xFF1E1E1E.toInt()   // #1E1E1E
-        private const val COLOR_TEXT = 0xFFFFFFFF.toInt()          // #FFFFFF
-        private const val COLOR_DOT_ACTIVE = 0xFF009E27.toInt()    // #009E27
-        private const val COLOR_DOT_IDLE = 0xFFE30613.toInt()      // красный (не трогали)
+        // ==== ЦВЕТА ====
+        private const val COLOR_HEADER_BG = 0xFF1E1E1E.toInt()
+        private const val COLOR_TEXT = 0xFFFFFFFF.toInt()
+        private const val COLOR_DOT_ACTIVE = 0xFF009E27.toInt()
+        private const val COLOR_DOT_IDLE = 0xFFE30613.toInt()
         private const val COLOR_MUTED = 0xFF9E9E9E.toInt()
         private const val COLOR_ACCENT = 0xFFE30613.toInt()
         private const val COLOR_INACTIVE = 0xFF2A2A2A.toInt()
-        private const val COLOR_BG = 0xFF1E1E1E.toInt()            // общий фон секций
 
-        // ==== РАЗМЕРЫ ====
-        private const val HEADER_HEIGHT_DP = 56                    // ~168px на xxhdpi
-        private const val TITLE_FONT_SP = 20f                      // на 2 меньше (было 22)
-        private const val STATUS_FONT_SP = 12f                     // на 2 меньше (было 14)
-        private const val DOT_SIZE_SP = 14f                        // чуть меньше
+        private const val HEADER_HEIGHT_DP = 56
+        private const val TITLE_FONT_SP = 20f
+        private const val STATUS_FONT_SP = 12f
+        private const val DOT_SIZE_SP = 14f
 
         const val ACTION_START = "com.s1xck.fmagnit.OVERLAY_START"
         const val ACTION_STOP = "com.s1xck.fmagnit.OVERLAY_STOP"
@@ -91,7 +89,6 @@ class OverlayService : Service() {
     private var dotView: TextView? = null
 
     private var orderContainer: LinearLayout? = null
-    private var headerView: LinearLayout? = null
 
     private var fullMap: MapView? = null
     private var fullMapWrapper: View? = null
@@ -256,7 +253,6 @@ class OverlayService : Service() {
             background = roundedBg(COLOR_HEADER_BG, 0)
         }
 
-        // ===== Шапка — фиксированная высота =====
         val header = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -267,7 +263,6 @@ class OverlayService : Service() {
                 dp(HEADER_HEIGHT_DP)
             )
         }
-        headerView = header
 
         dotView = TextView(ctx).apply {
             text = "●"
@@ -306,7 +301,6 @@ class OverlayService : Service() {
         header.addView(arrowView)
         root.addView(header)
 
-        // ===== Секция заказа =====
         orderContainer = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(4), dp(20), dp(16))
@@ -315,7 +309,6 @@ class OverlayService : Service() {
         }
         root.addView(orderContainer)
 
-        // ===== Основной раскрытый контент =====
         contentContainer = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(4), dp(20), dp(16))
@@ -472,7 +465,6 @@ class OverlayService : Service() {
             setPadding(0, 0, 0, dp(10))
         })
 
-        // ОТКРЫТЬ КАРТУ
         c.addView(TextView(ctx).apply {
             text = "ОТКРЫТЬ КАРТУ"
             setTextColor(COLOR_TEXT)
@@ -488,7 +480,6 @@ class OverlayService : Service() {
             ).also { it.bottomMargin = dp(8) }
         })
 
-        // ПЕРЕЙТИ + ЗАКРЫТЬ
         val row = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -503,13 +494,9 @@ class OverlayService : Service() {
             setPadding(dp(14), dp(12), dp(14), dp(12))
             background = roundedBg(COLOR_ACCENT, 12)
             setOnClickListener {
-                val b = Intent(ACTION_ORDER_START_MOCK)
-                b.setPackage(packageName)
-                b.putExtra(EXTRA_ORDER_LAT, lat)
-                b.putExtra(EXTRA_ORDER_LON, lon)
-                sendBroadcast(b)
-                isRunning = true
-                OverlayPrefs.saveRunning(this@OverlayService, true)
+                val ok = MockManager.start(this@OverlayService, lat, lon, 5.0, 0.0, 1000L)
+                isRunning = ok
+                OverlayPrefs.saveRunning(this@OverlayService, ok)
                 rebuildContent()
             }
             layoutParams = LinearLayout.LayoutParams(
@@ -628,12 +615,15 @@ class OverlayService : Service() {
         val hasOrder = OrderTargetStore.load(this) != null
         rebuildOrderBlock()
 
+        // Обновляем актуальное состояние MockManager
+        isRunning = MockManager.isRunning()
+        applyDotColor()
+
         if (expanded) {
             orderContainer?.visibility = if (hasOrder) View.VISIBLE else View.GONE
             container.visibility = View.VISIBLE
             arrowView?.text = "▼"
             activeLabel?.text = currentActiveNameOrPlaceholder()
-            applyDotColor()
 
             container.addView(View(ctx).apply {
                 layoutParams = LinearLayout.LayoutParams(
@@ -682,17 +672,23 @@ class OverlayService : Service() {
                 )
                 setOnClickListener {
                     if (isRunning) {
+                        MockManager.stop(this@OverlayService)
                         isRunning = false
                         OverlayPrefs.saveRunning(this@OverlayService, false)
-                        sendBroadcast(Intent(ACTION_POINT_STOP).apply { setPackage(packageName) })
                     } else {
                         val id = currentActiveId
                         if (id != null) {
-                            isRunning = true
-                            OverlayPrefs.saveRunning(this@OverlayService, true)
-                            sendBroadcast(Intent(ACTION_POINT_START).apply {
-                                setPackage(packageName); putExtra("id", id)
-                            })
+                            val point = parsePointsFull(currentPointsJson)
+                                .firstOrNull { it.first == id }
+                            if (point != null) {
+                                val ok = MockManager.start(
+                                    this@OverlayService,
+                                    point.second, point.third,
+                                    point.fourth, 0.0, 1000L
+                                )
+                                isRunning = ok
+                                OverlayPrefs.saveRunning(this@OverlayService, ok)
+                            }
                         }
                     }
                     rebuildContent()
@@ -703,14 +699,65 @@ class OverlayService : Service() {
                 ).also { it.topMargin = dp(10) }
             }
             container.addView(toggleBtn)
+
+            // ==== ВОССТАНОВИТЬ GPS ====
+            val restoreBtn = TextView(ctx).apply {
+                text = "ВОССТАНОВИТЬ GPS"
+                setTextColor(COLOR_MUTED)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                setTypeface(typeface, Typeface.BOLD)
+                gravity = Gravity.CENTER
+                setPadding(dp(16), dp(10), dp(16), dp(10))
+                background = roundedBg(COLOR_INACTIVE, 12)
+                setOnClickListener {
+                    MockManager.forceReset(this@OverlayService)
+                    isRunning = false
+                    OverlayPrefs.saveRunning(this@OverlayService, false)
+                    Toast.makeText(
+                        this@OverlayService,
+                        "GPS восстановлен. Подожди 5-10 секунд.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    rebuildContent()
+                }
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).also { it.topMargin = dp(8) }
+            }
+            container.addView(restoreBtn)
         } else {
             orderContainer?.visibility = if (hasOrder) View.VISIBLE else View.GONE
             container.visibility = View.GONE
             arrowView?.text = "▼"
             activeLabel?.text = currentActiveNameOrPlaceholder()
-            applyDotColor()
         }
     }
+
+    /** id, name, lat, lon, accuracy для старта mock */
+    private fun parsePointsFull(json: String): List<Quadruple> {
+        return try {
+            val arr = JSONArray(json)
+            val out = ArrayList<Quadruple>(arr.length())
+            for (i in 0 until arr.length()) {
+                val obj: JSONObject = arr.getJSONObject(i)
+                val id = obj.optString("id", "")
+                if (id.isEmpty()) continue
+                val lat = obj.optDouble("latitude", 0.0)
+                val lon = obj.optDouble("longitude", 0.0)
+                val acc = obj.optDouble("accuracy", 3.0)
+                out.add(Quadruple(id, lat, lon, acc))
+            }
+            out
+        } catch (_: Exception) { emptyList() }
+    }
+
+    data class Quadruple(
+        val first: String,   // id
+        val second: Double,  // lat
+        val third: Double,   // lon
+        val fourth: Double   // accuracy
+    )
 
     private fun parsePoints(json: String): List<Pair<String, String>> {
         return try {
