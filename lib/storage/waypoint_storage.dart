@@ -52,18 +52,7 @@ class WaypointStorage {
   }
 
   /// Импорт точек из JSON-строки. Возвращает (добавлено, пропущено).
-  ///
-  /// Поддерживает два формата:
-  ///
-  /// 1) "Родной" Waypoint-формат (то, что пишет toJson):
-  ///    {"name": "...", "latitude": 1.2, "longitude": 3.4, "doorCode": "..."}
-  ///
-  /// 2) Короткий формат (удобно готовить вручную / из Яндекса):
-  ///    {"name": "...", "lat": 1.2, "lon": 3.4, "doorCode": "...",
-  ///     "address": "...", "group": "..."}
-  ///
-  /// Формат определяется по каждому элементу отдельно.
-  /// Дубликаты — по координатам, округлённым до 6 знаков.
+  /// Дубликаты определяются по координатам, округлённым до 6 знаков.
   Future<ImportResult> importFromJson(String jsonString) async {
     final existing = await loadAll();
     final existingKeys = existing.map(_dupKey).toSet();
@@ -74,6 +63,7 @@ class WaypointStorage {
       if (decoded is List) {
         data = decoded;
       } else if (decoded is Map<String, dynamic> && decoded['waypoints'] is List) {
+        // Допускаем обёртку { "waypoints": [...] }
         data = decoded['waypoints'] as List;
       } else {
         throw const FormatException('Ожидался массив точек');
@@ -91,11 +81,7 @@ class WaypointStorage {
           skipped++;
           continue;
         }
-        final w = _waypointFromAny(raw);
-        if (w == null) {
-          skipped++;
-          continue;
-        }
+        final w = Waypoint.fromJson(raw);
         final key = _dupKey(w);
         if (existingKeys.contains(key)) {
           skipped++;
@@ -111,38 +97,6 @@ class WaypointStorage {
 
     await saveAll(existing);
     return ImportResult(added: added, skipped: skipped);
-  }
-
-  /// Понимает и "родной", и короткий формат.
-  Waypoint? _waypointFromAny(Map<String, dynamic> raw) {
-    // "Родной" — есть latitude/longitude
-    if (raw['latitude'] != null && raw['longitude'] != null) {
-      return Waypoint.fromJson(raw);
-    }
-
-    // Короткий — есть lat/lon
-    final lat = raw['lat'];
-    final lon = raw['lon'];
-    if (lat is! num || lon is! num) return null;
-
-    final name = (raw['name'] as String?)?.trim() ?? '';
-    final address = (raw['address'] as String?)?.trim() ?? '';
-    final doorCode = (raw['doorCode'] as String?)?.trim() ?? '';
-    final group = (raw['group'] as String?)?.trim() ?? '';
-
-    final fullName = (name.isEmpty && address.isEmpty)
-        ? 'Точка'
-        : (name.isEmpty
-            ? address
-            : (address.isEmpty ? name : '$name — $address'));
-
-    return Waypoint(
-      name: fullName,
-      latitude: lat.toDouble(),
-      longitude: lon.toDouble(),
-      doorCode: doorCode,
-      group: group,
-    );
   }
 
   String _dupKey(Waypoint w) {
