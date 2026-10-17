@@ -5,12 +5,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../main.dart';
+import '../models/door_code.dart';
 import '../models/waypoint.dart';
 import '../services/mock_location_service.dart';
 import '../services/order_target_service.dart';
 import '../services/overlay_service.dart';
+import '../storage/door_code_storage.dart';
 import '../storage/waypoint_storage.dart';
 import 'address_search_dialog.dart';
+import 'door_codes_page.dart';
 import 'health_page.dart';
 import 'import_export_dialogs.dart';
 import 'map_download_page.dart';
@@ -25,6 +28,7 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final _storage = WaypointStorage();
+  final _doorStorage = DoorCodeStorage();
   final _overlay = OverlayService();
   final _mock = MockLocationService();
   final _orderTarget = OrderTargetService();
@@ -55,9 +59,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _refreshOrderTarget();
     _refreshCrashLog();
     _overlay.setStartHandler(_onOverlayStartRequested);
-
-    // forceResetMock НЕ вызываем при старте — иначе сбрасывается текущий mock
-    // (кнопка "Восстановить GPS" есть в оверлее и в меню)
 
     _stateTimer = Timer.periodic(const Duration(seconds: 2), (_) {
       _pollOverlayState();
@@ -135,6 +136,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _loading = false;
     });
     await _pushPointsToOverlay();
+    await _pushDoorCodesToOverlay();
   }
 
   Future<void> _refreshPermissions() async {
@@ -152,17 +154,26 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Future<void> _pushPointsToOverlay() async {
-    // ВАЖНО: отправляем полные данные, чтобы оверлей мог запускать mock
-    // и показывать код домофона для ближайшей точки.
     final json = jsonEncode(_waypoints.map((w) => {
           'id': w.id,
           'name': w.name,
           'latitude': w.latitude,
           'longitude': w.longitude,
           'accuracy': w.accuracy,
-          'doorCode': w.doorCode,
         }).toList());
     await _overlay.updatePoints(pointsJson: json, activeId: _activeId);
+  }
+
+  Future<void> _pushDoorCodesToOverlay() async {
+    final codes = await _doorStorage.loadAll();
+    final json = jsonEncode(codes.map((c) => {
+          'id': c.id,
+          'code': c.code,
+          'address': c.address,
+          'latitude': c.latitude,
+          'longitude': c.longitude,
+        }).toList());
+    await _overlay.updateDoorCodes(codesJson: json);
   }
 
   Future<void> _toggleOverlay() async {
@@ -184,6 +195,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       await _overlay.startOverlay();
       await Future.delayed(const Duration(milliseconds: 400));
       await _pushPointsToOverlay();
+      await _pushDoorCodesToOverlay();
     }
     await Future.delayed(const Duration(milliseconds: 600));
     await _refreshPermissions();
@@ -200,6 +212,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     await Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const MapDownloadPage()),
     );
+  }
+
+  Future<void> _openDoorCodes() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const DoorCodesPage()),
+    );
+    await _pushDoorCodesToOverlay();
   }
 
   Future<void> _restoreGps() async {
@@ -479,8 +498,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Widget _buildWaypointTile(Waypoint w) {
-    final hasCode = w.doorCode.isNotEmpty;
-
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
       child: Container(
@@ -492,46 +509,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
-          title: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  w.name,
-                  style: const TextStyle(
-                    color: FMagnitTheme.textPrimary,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 15,
-                  ),
-                ),
-              ),
-              if (hasCode) ...[
-                const SizedBox(width: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: FMagnitTheme.accent.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.vpn_key,
-                          size: 12, color: FMagnitTheme.accent),
-                      const SizedBox(width: 4),
-                      Text(
-                        w.doorCode,
-                        style: const TextStyle(
-                          color: FMagnitTheme.accent,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ],
+          title: Text(
+            w.name,
+            style: const TextStyle(
+              color: FMagnitTheme.textPrimary,
+              fontWeight: FontWeight.w600,
+              fontSize: 15,
+            ),
           ),
           subtitle: Padding(
             padding: const EdgeInsets.only(top: 4),
@@ -835,6 +819,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 case 'test_order':
                   _testOrder();
                   break;
+                case 'door_codes':
+                  _openDoorCodes();
+                  break;
                 case 'map_download':
                   _openMapDownload();
                   break;
@@ -866,6 +853,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     Icon(Icons.assignment_turned_in_outlined, size: 20),
                     SizedBox(width: 12),
                     Text('Тестовый заказ'),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'door_codes',
+                child: Row(
+                  children: [
+                    Icon(Icons.vpn_key_outlined, size: 20),
+                    SizedBox(width: 12),
+                    Text('Коды домофонов'),
                   ],
                 ),
               ),
@@ -928,7 +925,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   children: [
                     Icon(Icons.file_download_outlined, size: 20),
                     SizedBox(width: 12),
-                    Text('Импорт'),
+                    Text('Импорт точек'),
                   ],
                 ),
               ),
@@ -938,7 +935,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   children: [
                     Icon(Icons.file_upload_outlined, size: 20),
                     SizedBox(width: 12),
-                    Text('Экспорт'),
+                    Text('Экспорт точек'),
                   ],
                 ),
               ),
@@ -1068,8 +1065,7 @@ class _PickWaypointDialog extends StatelessWidget {
               subtitle: Text(
                 '${w.latitude.toStringAsFixed(6)}, '
                 '${w.longitude.toStringAsFixed(6)}'
-                '${w.group.isNotEmpty ? '  •  ${w.group}' : ''}'
-                '${w.doorCode.isNotEmpty ? '  •  🔑 ${w.doorCode}' : ''}',
+                '${w.group.isNotEmpty ? '  •  ${w.group}' : ''}',
                 style: const TextStyle(fontSize: 11),
               ),
               onTap: () => Navigator.of(context).pop(w),
@@ -1111,7 +1107,6 @@ class _WaypointDialog extends StatefulWidget {
 class _WaypointDialogState extends State<_WaypointDialog> {
   late final TextEditingController _nameCtrl;
   late final TextEditingController _groupCtrl;
-  late final TextEditingController _doorCtrl;
   late final TextEditingController _latCtrl;
   late final TextEditingController _lonCtrl;
   late final TextEditingController _accCtrl;
@@ -1122,7 +1117,6 @@ class _WaypointDialogState extends State<_WaypointDialog> {
     final w = widget.initial;
     _nameCtrl = TextEditingController(text: w?.name ?? '');
     _groupCtrl = TextEditingController(text: w?.group ?? '');
-    _doorCtrl = TextEditingController(text: w?.doorCode ?? '');
     _latCtrl = TextEditingController(
       text: (w?.latitude ?? widget.presetLat)?.toString() ?? '',
     );
@@ -1138,7 +1132,6 @@ class _WaypointDialogState extends State<_WaypointDialog> {
   void dispose() {
     _nameCtrl.dispose();
     _groupCtrl.dispose();
-    _doorCtrl.dispose();
     _latCtrl.dispose();
     _lonCtrl.dispose();
     _accCtrl.dispose();
@@ -1148,7 +1141,6 @@ class _WaypointDialogState extends State<_WaypointDialog> {
   void _save() {
     final name = _nameCtrl.text.trim();
     final group = _groupCtrl.text.trim();
-    final doorCode = _doorCtrl.text.trim();
     final lat = double.tryParse(_latCtrl.text.trim());
     final lon = double.tryParse(_lonCtrl.text.trim());
     final acc = double.tryParse(_accCtrl.text.trim()) ?? 3.0;
@@ -1164,7 +1156,6 @@ class _WaypointDialogState extends State<_WaypointDialog> {
         ? widget.initial!.copyWith(
             name: name,
             group: group,
-            doorCode: doorCode,
             latitude: lat,
             longitude: lon,
             accuracy: acc,
@@ -1172,7 +1163,6 @@ class _WaypointDialogState extends State<_WaypointDialog> {
         : Waypoint(
             name: name,
             group: group,
-            doorCode: doorCode,
             latitude: lat,
             longitude: lon,
             accuracy: acc,
@@ -1229,15 +1219,6 @@ class _WaypointDialogState extends State<_WaypointDialog> {
                                 ))
                             .toList(),
                       ),
-              ),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _doorCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Код домофона (необязательно)',
-                hintText: 'например, 1234#',
-                prefixIcon: Icon(Icons.vpn_key, size: 20),
               ),
             ),
             const SizedBox(height: 10),
