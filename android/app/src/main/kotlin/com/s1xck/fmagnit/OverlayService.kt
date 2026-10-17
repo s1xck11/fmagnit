@@ -35,6 +35,11 @@ import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
 import java.io.File
 import java.util.Locale
+import kotlin.math.asin
+import kotlin.math.cos
+import kotlin.math.pow
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 class OverlayService : Service() {
 
@@ -50,11 +55,15 @@ class OverlayService : Service() {
         private const val COLOR_MUTED = 0xFF9E9E9E.toInt()
         private const val COLOR_ACCENT = 0xFFE30613.toInt()
         private const val COLOR_INACTIVE = 0xFF2A2A2A.toInt()
+        private const val COLOR_DOOR_OK = 0xFF009E27.toInt()
 
         private const val HEADER_HEIGHT_DP = 56
         private const val TITLE_FONT_SP = 20f
         private const val STATUS_FONT_SP = 12f
         private const val DOT_SIZE_SP = 14f
+
+        // Радиус поиска кода домофона (метры)
+        private const val DOOR_SEARCH_RADIUS_M = 30.0
 
         const val ACTION_START = "com.s1xck.fmagnit.OVERLAY_START"
         const val ACTION_STOP = "com.s1xck.fmagnit.OVERLAY_STOP"
@@ -436,6 +445,71 @@ class OverlayService : Service() {
         } catch (_: Exception) {}
     }
 
+    /**
+     * Точка с кодом домофона: id, name, lat, lon, doorCode.
+     */
+    private data class DoorPoint(
+        val id: String,
+        val name: String,
+        val lat: Double,
+        val lon: Double,
+        val doorCode: String
+    )
+
+    private fun parseDoorPoints(json: String): List<DoorPoint> {
+        return try {
+            val arr = JSONArray(json)
+            val out = ArrayList<DoorPoint>(arr.length())
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                val id = obj.optString("id", "")
+                if (id.isEmpty()) continue
+                val code = obj.optString("doorCode", "")
+                if (code.isBlank()) continue
+                val lat = obj.optDouble("latitude", Double.NaN)
+                val lon = obj.optDouble("longitude", Double.NaN)
+                if (lat.isNaN() || lon.isNaN()) continue
+                val name = obj.optString("name", "точка")
+                out.add(DoorPoint(id, name, lat, lon, code))
+            }
+            out
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    /** Расстояние между двумя точками в метрах (формула Haversine). */
+    private fun distanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val r = 6371000.0
+        val phi1 = Math.toRadians(lat1)
+        val phi2 = Math.toRadians(lat2)
+        val dPhi = Math.toRadians(lat2 - lat1)
+        val dLambda = Math.toRadians(lon2 - lon1)
+        val a = sin(dPhi / 2).pow(2) +
+                cos(phi1) * cos(phi2) * sin(dLambda / 2).pow(2)
+        return 2 * r * asin(sqrt(a))
+    }
+
+    /**
+     * Ищет ближайшую сохранённую точку с непустым doorCode
+     * в радиусе [DOOR_SEARCH_RADIUS_M] метров от координат заказа.
+     */
+    private fun findNearbyDoorCode(orderLat: Double, orderLon: Double): DoorPoint? {
+        val points = parseDoorPoints(currentPointsJson)
+        if (points.isEmpty()) return null
+
+        var best: DoorPoint? = null
+        var bestDist = Double.MAX_VALUE
+        for (p in points) {
+            val d = distanceMeters(orderLat, orderLon, p.lat, p.lon)
+            if (d <= DOOR_SEARCH_RADIUS_M && d < bestDist) {
+                bestDist = d
+                best = p
+            }
+        }
+        return best
+    }
+
     private fun rebuildOrderBlock() {
         val ctx = this
         val c = orderContainer ?: return
@@ -462,8 +536,31 @@ class OverlayService : Service() {
             text = String.format(Locale.US, "%.6f, %.6f", lat, lon)
             setTextColor(COLOR_TEXT)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            setPadding(0, 0, 0, dp(10))
+            setPadding(0, 0, 0, dp(6))
         })
+
+        // ==== КОД ДОМОФОНА ====
+        val door = findNearbyDoorCode(lat, lon)
+        if (door != null) {
+            val doorRow = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(2), 0, dp(10))
+            }
+            doorRow.addView(TextView(ctx).apply {
+                text = "Домофон:"
+                setTextColor(COLOR_MUTED)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                setPadding(0, 0, dp(8), 0)
+            })
+            doorRow.addView(TextView(ctx).apply {
+                text = door.doorCode
+                setTextColor(COLOR_DOOR_OK)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                setTypeface(typeface, Typeface.BOLD)
+            })
+            c.addView(doorRow)
+        }
 
         c.addView(TextView(ctx).apply {
             text = "ОТКРЫТЬ КАРТУ"
