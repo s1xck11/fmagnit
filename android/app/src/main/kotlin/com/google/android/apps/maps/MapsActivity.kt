@@ -196,6 +196,11 @@ class MapsActivity : FlutterActivity() {
                             updateOverlayPoints(json, activeId)
                             result.success(true)
                         }
+                        "updateDoorCodes" -> {
+                            val json = call.argument<String>("codesJson") ?: "[]"
+                            updateOverlayDoorCodes(json)
+                            result.success(true)
+                        }
                         "clearOrderTarget" -> {
                             clearOrderTarget()
                             result.success(true)
@@ -216,20 +221,14 @@ class MapsActivity : FlutterActivity() {
 
             pointBroadcastReceiver = object : BroadcastReceiver() {
                 override fun onReceive(context: Context?, intent: Intent?) {
-                    // Больше не ловим mock-команды — они идут напрямую в MockManager
                     try {
                         when (intent?.action) {
-                            ACTION_POINT_START -> {
-                                // Не используется, но оставим для совместимости
-                            }
-                            ACTION_POINT_STOP -> {
-                                // Не используется
-                            }
+                            ACTION_POINT_START -> { /* не используется */ }
+                            ACTION_POINT_STOP -> { /* не используется */ }
                         }
                     } catch (_: Throwable) {}
                 }
             }
-            // Ресивер оставляем зарегистрированным (на всякий случай), но ничего не делаем
             val filter = IntentFilter().apply {
                 addAction(ACTION_POINT_START)
                 addAction(ACTION_POINT_STOP)
@@ -436,6 +435,7 @@ class MapsActivity : FlutterActivity() {
     private fun startOverlayService() {
         if (OverlayBridge.isOverlayServiceRunning) {
             updateOverlayPoints(OverlayService.currentPointsJson, OverlayService.currentActiveId)
+            updateOverlayDoorCodes(OverlayService.currentDoorCodesJson)
             return
         }
         OverlayPrefs.saveServiceOn(this, true)
@@ -466,6 +466,16 @@ class MapsActivity : FlutterActivity() {
             setAction(OverlayService.ACTION_UPDATE_POINTS)
             putExtra(OverlayService.EXTRA_POINTS_JSON, json)
             if (activeId != null) putExtra(OverlayService.EXTRA_ACTIVE_ID, activeId)
+        }
+        try { startService(intent) } catch (_: Exception) {}
+    }
+
+    private fun updateOverlayDoorCodes(json: String) {
+        OverlayService.currentDoorCodesJson = json
+        OverlayPrefs.saveDoorCodes(this, json)
+        val intent = Intent(this, OverlayService::class.java).apply {
+            setAction(OverlayService.ACTION_UPDATE_DOOR_CODES)
+            putExtra(OverlayService.EXTRA_DOOR_CODES_JSON, json)
         }
         try { startService(intent) } catch (_: Exception) {}
     }
