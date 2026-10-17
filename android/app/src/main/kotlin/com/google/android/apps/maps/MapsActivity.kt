@@ -7,24 +7,20 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.location.Criteria
-import android.location.Location
-import android.location.LocationManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
-import android.widget.Toast
 import com.s1xck.fmagnit.ACTION_POINT_START
 import com.s1xck.fmagnit.ACTION_POINT_STOP
 import com.s1xck.fmagnit.CrashLogger
 import com.s1xck.fmagnit.ForegroundDetector
 import com.s1xck.fmagnit.MainAccessibilityService
 import com.s1xck.fmagnit.MapDownloadService
+import com.s1xck.fmagnit.MockManager
 import com.s1xck.fmagnit.OrderTargetStore
 import com.s1xck.fmagnit.OverlayBridge
 import com.s1xck.fmagnit.OverlayPrefs
@@ -33,39 +29,17 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import org.osmdroid.config.Configuration
-import kotlin.math.cos
-import kotlin.math.sin
-import kotlin.random.Random
 
 class MapsActivity : FlutterActivity() {
 
     companion object {
         private const val TAG = "FMAGNIT_INTENT"
-        private const val NOTIF_CHANNEL = "fmagnit_intent_debug"
-        private const val NOTIF_ID = 7331
     }
 
     private val mockChannelName = "com.s1xck.fmagnit/mock_location"
     private val overlayChannelName = "com.s1xck.fmagnit/overlay"
 
-    private val providers = listOf(
-        LocationManager.GPS_PROVIDER,
-        LocationManager.NETWORK_PROVIDER
-    )
-
-    private var locationManager: LocationManager? = null
     private var handler: Handler? = null
-    private var pushRunnable: Runnable? = null
-
-    private var baseLat: Double = 0.0
-    private var baseLon: Double = 0.0
-    private var baseAcc: Double = 3.0
-    private var baseAlt: Double = 0.0
-
-    private var displayLat: Double = 0.0
-    private var displayLon: Double = 0.0
-
-    private var isMockRunning = false
 
     private var pointBroadcastReceiver: BroadcastReceiver? = null
     private var overlayChannel: MethodChannel? = null
@@ -99,8 +73,6 @@ class MapsActivity : FlutterActivity() {
                 Configuration.getInstance().userAgentValue = packageName
             } catch (_: Throwable) {}
 
-            locationManager =
-                applicationContext.getSystemService(Context.LOCATION_SERVICE) as LocationManager
             handler = Handler(Looper.getMainLooper())
 
             mockChannel = MethodChannel(
@@ -110,28 +82,35 @@ class MapsActivity : FlutterActivity() {
             mockChannel?.setMethodCallHandler { call, result ->
                 try {
                     when (call.method) {
-                        "isMockLocationEnabled" -> result.success(isMockLocationEnabled())
-                        "openDeveloperSettings" -> { openDeveloperSettings(); result.success(null) }
-                        "isMockRunning" -> result.success(isMockRunning)
+                        "isMockLocationEnabled" -> {
+                            result.success(MockManager.isMockLocationEnabled(this))
+                        }
+                        "openDeveloperSettings" -> {
+                            openDeveloperSettings()
+                            result.success(null)
+                        }
+                        "isMockRunning" -> result.success(MockManager.isRunning())
                         "startMock" -> {
                             val lat = call.argument<Double>("latitude") ?: 0.0
                             val lon = call.argument<Double>("longitude") ?: 0.0
                             val acc = call.argument<Double>("accuracy") ?: 3.0
                             val alt = call.argument<Double>("altitude") ?: 0.0
                             val interval = call.argument<Int>("intervalMs") ?: 1000
-                            result.success(startMock(lat, lon, acc, alt, interval.toLong()))
+                            result.success(
+                                MockManager.start(this, lat, lon, acc, alt, interval.toLong())
+                            )
                         }
                         "updateMock" -> {
                             val lat = call.argument<Double>("latitude") ?: 0.0
                             val lon = call.argument<Double>("longitude") ?: 0.0
                             val acc = call.argument<Double>("accuracy") ?: 3.0
                             val alt = call.argument<Double>("altitude") ?: 0.0
-                            result.success(updateMock(lat, lon, acc, alt))
+                            result.success(MockManager.update(this, lat, lon, acc, alt))
                         }
-                        "stopMock" -> result.success(stopMock())
-                        "forceResetMock" -> result.success(forceResetMock())
+                        "stopMock" -> result.success(MockManager.stop(this))
+                        "forceResetMock" -> result.success(MockManager.forceReset(this))
                         "getRealLocation" -> {
-                            val loc = getBestRealLocation()
+                            val loc = MockManager.getBestRealLocation(this)
                             if (loc == null) {
                                 result.success(null)
                             } else {
@@ -149,8 +128,6 @@ class MapsActivity : FlutterActivity() {
                             CrashLogger.clear(this)
                             result.success(true)
                         }
-
-                        // ---- Загрузка карт ----
                         "startMapDownload" -> {
                             val name = call.argument<String>("name") ?: "Регион"
                             val south = call.argument<Double>("south") ?: 0.0
@@ -179,7 +156,6 @@ class MapsActivity : FlutterActivity() {
                             MapDownloadService.deleteRegion(applicationContext, id)
                             result.success(true)
                         }
-
                         else -> result.notImplemented()
                     }
                 } catch (e: Throwable) {
@@ -196,11 +172,20 @@ class MapsActivity : FlutterActivity() {
                 try {
                     when (call.method) {
                         "hasOverlayPermission" -> result.success(Settings.canDrawOverlays(this))
-                        "requestOverlayPermission" -> { requestOverlayPermission(); result.success(null) }
+                        "requestOverlayPermission" -> {
+                            requestOverlayPermission()
+                            result.success(null)
+                        }
                         "hasAccessibilityPermission" -> result.success(isAccessibilityServiceEnabled())
-                        "openAccessibilitySettings" -> { openAccessibilitySettings(); result.success(null) }
+                        "openAccessibilitySettings" -> {
+                            openAccessibilitySettings()
+                            result.success(null)
+                        }
                         "hasUsageAccess" -> result.success(ForegroundDetector.hasUsageAccess(this))
-                        "openUsageAccessSettings" -> { openUsageAccessSettings(); result.success(null) }
+                        "openUsageAccessSettings" -> {
+                            openUsageAccessSettings()
+                            result.success(null)
+                        }
                         "getForegroundPackage" -> result.success(ForegroundDetector.getForegroundPackage(this))
                         "startOverlay" -> { startOverlayService(); result.success(true) }
                         "stopOverlay" -> { stopOverlayService(); result.success(true) }
@@ -231,33 +216,23 @@ class MapsActivity : FlutterActivity() {
 
             pointBroadcastReceiver = object : BroadcastReceiver() {
                 override fun onReceive(context: Context?, intent: Intent?) {
+                    // Больше не ловим mock-команды — они идут напрямую в MockManager
                     try {
                         when (intent?.action) {
                             ACTION_POINT_START -> {
-                                val id = intent.getStringExtra("id")
-                                overlayChannel?.invokeMethod("onOverlayStart", mapOf("id" to id))
+                                // Не используется, но оставим для совместимости
                             }
                             ACTION_POINT_STOP -> {
-                                forceResetMock()
-                                overlayChannel?.invokeMethod("onOverlayStop", null)
-                            }
-                            ACTION_ORDER_START_MOCK -> {
-                                val lat = intent.getDoubleExtra(OverlayService.EXTRA_ORDER_LAT, Double.NaN)
-                                val lon = intent.getDoubleExtra(OverlayService.EXTRA_ORDER_LON, Double.NaN)
-                                if (!lat.isNaN() && !lon.isNaN()) {
-                                    startMock(lat, lon, 5.0, 0.0, 1000L)
-                                }
+                                // Не используется
                             }
                         }
-                    } catch (e: Throwable) {
-                        CrashLogger.log(applicationContext, "broadcast_receiver", e)
-                    }
+                    } catch (_: Throwable) {}
                 }
             }
+            // Ресивер оставляем зарегистрированным (на всякий случай), но ничего не делаем
             val filter = IntentFilter().apply {
                 addAction(ACTION_POINT_START)
                 addAction(ACTION_POINT_STOP)
-                addAction(ACTION_ORDER_START_MOCK)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 registerReceiver(pointBroadcastReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
@@ -288,9 +263,7 @@ class MapsActivity : FlutterActivity() {
             val action = intent?.action
             val data: Uri? = intent?.data
 
-            if (action == Intent.ACTION_MAIN || data == null) {
-                return
-            }
+            if (action == Intent.ACTION_MAIN || data == null) return
 
             val uriStr = data.toString()
             if (uriStr == lastHandledUri) return
@@ -408,32 +381,7 @@ class MapsActivity : FlutterActivity() {
 
     override fun onDestroy() {
         try { pointBroadcastReceiver?.let { unregisterReceiver(it) } } catch (_: Exception) {}
-        stopPushLoop()
         super.onDestroy()
-    }
-
-    private fun isMockLocationEnabled(): Boolean {
-        return try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                val appOps = getSystemService(Context.APP_OPS_SERVICE) as android.app.AppOpsManager
-                val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    appOps.unsafeCheckOpNoThrow(
-                        android.app.AppOpsManager.OPSTR_MOCK_LOCATION,
-                        android.os.Process.myUid(), packageName
-                    )
-                } else {
-                    @Suppress("DEPRECATION")
-                    appOps.checkOpNoThrow(
-                        android.app.AppOpsManager.OPSTR_MOCK_LOCATION,
-                        android.os.Process.myUid(), packageName
-                    )
-                }
-                mode == android.app.AppOpsManager.MODE_ALLOWED
-            } else {
-                @Suppress("DEPRECATION")
-                Settings.Secure.getString(contentResolver, Settings.Secure.ALLOW_MOCK_LOCATION) == "1"
-            }
-        } catch (_: Exception) { false }
     }
 
     private fun openDeveloperSettings() {
@@ -442,173 +390,6 @@ class MapsActivity : FlutterActivity() {
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             startActivity(intent)
         } catch (_: Exception) {}
-    }
-
-    private fun getBestRealLocation(): Location? {
-        val lm = locationManager ?: return null
-        var best: Location? = null
-        for (p in providers) {
-            val loc = try { lm.getLastKnownLocation(p) } catch (_: Exception) { null } ?: continue
-            if (best == null) { best = loc; continue }
-            val ageDiff = best.time - loc.time
-            if (ageDiff > 10_000) { best = loc; continue }
-            if (loc.accuracy < best.accuracy) best = loc
-        }
-        return best
-    }
-
-    private fun ensureProvider(providerName: String) {
-        val lm = locationManager ?: return
-        try { lm.removeTestProvider(providerName) } catch (_: Exception) {}
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                lm.addTestProvider(
-                    providerName, false, false, false, false, true, true, true,
-                    android.location.provider.ProviderProperties.POWER_USAGE_LOW,
-                    android.location.provider.ProviderProperties.ACCURACY_FINE
-                )
-            } else {
-                @Suppress("DEPRECATION")
-                lm.addTestProvider(
-                    providerName, false, false, false, false, true, true, true,
-                    Criteria.POWER_LOW, Criteria.ACCURACY_FINE
-                )
-            }
-            lm.setTestProviderEnabled(providerName, true)
-        } catch (_: Exception) {}
-    }
-
-    private fun buildLocation(
-        providerName: String,
-        lat: Double,
-        lon: Double,
-        acc: Double,
-        alt: Double,
-        speed: Float,
-        bearing: Float
-    ): Location {
-        val loc = Location(providerName)
-        loc.latitude = lat
-        loc.longitude = lon
-        loc.accuracy = acc.toFloat()
-        loc.altitude = alt
-        loc.time = System.currentTimeMillis()
-        loc.elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            loc.verticalAccuracyMeters = acc.toFloat()
-            loc.speedAccuracyMetersPerSecond = (acc * 0.4).toFloat()
-            loc.bearingAccuracyDegrees = 20f
-        }
-        loc.speed = speed
-        loc.bearing = bearing
-        return loc
-    }
-
-    private fun applyJitter(offsetMeters: Double = 2.5) {
-        val r = Random.nextDouble(-1.0, 1.0) + Random.nextDouble(-1.0, 1.0)
-        val angle = Random.nextDouble(0.0, 2 * Math.PI)
-        val dx = r * offsetMeters * cos(angle)
-        val dy = r * offsetMeters * sin(angle)
-        val metersPerDegLat = 111_320.0
-        val metersPerDegLon = 111_320.0 * cos(Math.toRadians(baseLat))
-        displayLat = baseLat + dy / metersPerDegLat
-        displayLon = baseLon + dx / metersPerDegLon
-    }
-
-    private fun pushLocation() {
-        val lm = locationManager ?: return
-        if (!isMockRunning) return
-        applyJitter()
-        val jitterAcc = baseAcc + Random.nextDouble(-3.0, 3.0)
-        val acc = jitterAcc.coerceAtLeast(1.0)
-        val speed = Random.nextFloat() * 0.4f
-        val bearing = Random.nextFloat() * 360f
-        try {
-            for (p in providers) {
-                val loc = buildLocation(p, displayLat, displayLon, acc, baseAlt, speed, bearing)
-                try { lm.setTestProviderLocation(p, loc) } catch (_: Exception) {}
-            }
-        } catch (_: Exception) {}
-    }
-
-    private fun startMock(lat: Double, lon: Double, acc: Double, alt: Double, intervalMs: Long): Boolean {
-        return try {
-            baseLat = lat
-            baseLon = lon
-            baseAcc = acc
-            baseAlt = alt
-            displayLat = lat
-            displayLon = lon
-            for (p in providers) ensureProvider(p)
-            isMockRunning = true
-            pushLocation()
-            startPushLoop(intervalMs)
-            true
-        } catch (_: Exception) { false }
-    }
-
-    private fun startPushLoop(baseIntervalMs: Long) {
-        stopPushLoop()
-        val r = object : Runnable {
-            override fun run() {
-                pushLocation()
-                val jitter = baseIntervalMs * (0.7 + Random.nextDouble() * 0.6)
-                handler?.postDelayed(this, jitter.toLong())
-            }
-        }
-        pushRunnable = r
-        handler?.postDelayed(r, baseIntervalMs)
-    }
-
-    private fun stopPushLoop() {
-        pushRunnable?.let { handler?.removeCallbacks(it) }
-        pushRunnable = null
-    }
-
-    private fun updateMock(lat: Double, lon: Double, acc: Double, alt: Double): Boolean {
-        return try {
-            baseLat = lat
-            baseLon = lon
-            baseAcc = acc
-            baseAlt = alt
-            displayLat = lat
-            displayLon = lon
-            pushLocation()
-            true
-        } catch (_: Exception) { false }
-    }
-
-    private fun stopMock(): Boolean {
-        return try {
-            isMockRunning = false
-            stopPushLoop()
-            Thread.sleep(50)
-            for (p in providers) {
-                try { locationManager?.setTestProviderEnabled(p, false) } catch (_: Exception) {}
-                try { locationManager?.removeTestProvider(p) } catch (_: Exception) {}
-            }
-            Thread.sleep(150)
-            for (p in providers) {
-                try { locationManager?.removeTestProvider(p) } catch (_: Exception) {}
-            }
-            true
-        } catch (_: Exception) { false }
-    }
-
-    private fun forceResetMock(): Boolean {
-        return try {
-            isMockRunning = false
-            stopPushLoop()
-            for (p in providers) {
-                try { locationManager?.setTestProviderEnabled(p, false) } catch (_: Exception) {}
-                try { locationManager?.removeTestProvider(p) } catch (_: Exception) {}
-            }
-            Thread.sleep(200)
-            for (p in providers) {
-                try { locationManager?.removeTestProvider(p) } catch (_: Exception) {}
-            }
-            true
-        } catch (_: Exception) { false }
     }
 
     private fun requestOverlayPermission() {
