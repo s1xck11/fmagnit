@@ -68,12 +68,17 @@ class OverlayService : Service() {
         const val ACTION_START = "com.s1xck.fmagnit.OVERLAY_START"
         const val ACTION_STOP = "com.s1xck.fmagnit.OVERLAY_STOP"
         const val ACTION_UPDATE_POINTS = "com.s1xck.fmagnit.OVERLAY_UPDATE_POINTS"
+        const val ACTION_UPDATE_DOOR_CODES =
+            "com.s1xck.fmagnit.OVERLAY_UPDATE_DOOR_CODES"
         const val ACTION_ORDER_TARGET = "com.s1xck.fmagnit.OVERLAY_ORDER_TARGET"
-        const val ACTION_ORDER_TARGET_CLEAR = "com.s1xck.fmagnit.OVERLAY_ORDER_CLEAR"
-        const val ACTION_ORDER_START_MOCK = "com.s1xck.fmagnit.ORDER_START_MOCK"
+        const val ACTION_ORDER_TARGET_CLEAR =
+            "com.s1xck.fmagnit.OVERLAY_ORDER_CLEAR"
+        const val ACTION_ORDER_START_MOCK =
+            "com.s1xck.fmagnit.ORDER_START_MOCK"
 
         const val EXTRA_POINTS_JSON = "points_json"
         const val EXTRA_ACTIVE_ID = "active_id"
+        const val EXTRA_DOOR_CODES_JSON = "door_codes_json"
         const val EXTRA_ORDER_LAT = "order_lat"
         const val EXTRA_ORDER_LON = "order_lon"
 
@@ -81,6 +86,7 @@ class OverlayService : Service() {
 
         @Volatile var currentPointsJson: String = "[]"
         @Volatile var currentActiveId: String? = null
+        @Volatile var currentDoorCodesJson: String = "[]"
     }
 
     private var windowManager: WindowManager? = null
@@ -114,9 +120,11 @@ class OverlayService : Service() {
 
         currentPointsJson = OverlayPrefs.loadPoints(this)
         currentActiveId = OverlayPrefs.loadActiveId(this)
+        currentDoorCodesJson = OverlayPrefs.loadDoorCodes(this)
         isRunning = OverlayPrefs.loadRunning(this)
 
-        windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        windowManager =
+            getSystemService(Context.WINDOW_SERVICE) as WindowManager
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
 
@@ -146,7 +154,11 @@ class OverlayService : Service() {
         } catch (_: Exception) {}
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+    override fun onStartCommand(
+        intent: Intent?,
+        flags: Int,
+        startId: Int
+    ): Int {
         when (intent?.action) {
             ACTION_STOP -> {
                 OverlayPrefs.saveServiceOn(this, false)
@@ -161,6 +173,13 @@ class OverlayService : Service() {
                 intent.getStringExtra(EXTRA_ACTIVE_ID)?.let {
                     currentActiveId = it
                     OverlayPrefs.saveActiveId(this, it)
+                }
+                handler.post { rebuildContent() }
+            }
+            ACTION_UPDATE_DOOR_CODES -> {
+                intent.getStringExtra(EXTRA_DOOR_CODES_JSON)?.let {
+                    currentDoorCodesJson = it
+                    OverlayPrefs.saveDoorCodes(this, it)
                 }
                 handler.post { rebuildContent() }
             }
@@ -203,7 +222,9 @@ class OverlayService : Service() {
     }
 
     private fun releaseWakeLock() {
-        try { if (wakeLock?.isHeld == true) wakeLock?.release() } catch (_: Exception) {}
+        try {
+            if (wakeLock?.isHeld == true) wakeLock?.release()
+        } catch (_: Exception) {}
         wakeLock = null
     }
 
@@ -212,7 +233,9 @@ class OverlayService : Service() {
             val nm = getSystemService(NotificationManager::class.java)
             if (nm.getNotificationChannel(CHANNEL_ID) == null) {
                 val ch = NotificationChannel(
-                    CHANNEL_ID, "fmagnit overlay", NotificationManager.IMPORTANCE_MIN
+                    CHANNEL_ID,
+                    "fmagnit overlay",
+                    NotificationManager.IMPORTANCE_MIN
                 )
                 ch.setShowBadge(false)
                 nm.createNotificationChannel(ch)
@@ -221,8 +244,12 @@ class OverlayService : Service() {
     }
 
     private fun buildNotification(): Notification {
-        val openIntent = Intent(this, com.google.android.apps.maps.MapsActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        val openIntent = Intent(
+            this,
+            com.google.android.apps.maps.MapsActivity::class.java
+        ).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         val piFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
@@ -243,7 +270,9 @@ class OverlayService : Service() {
     }
 
     private fun dp(v: Int): Int = TypedValue.applyDimension(
-        TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics
+        TypedValue.COMPLEX_UNIT_DIP,
+        v.toFloat(),
+        resources.displayMetrics
     ).toInt()
 
     private fun roundedBg(color: Int, radiusDp: Int): GradientDrawable {
@@ -286,7 +315,9 @@ class OverlayService : Service() {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, TITLE_FONT_SP)
             setTypeface(typeface, Typeface.BOLD)
             layoutParams = LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1f
             )
         }
 
@@ -332,7 +363,8 @@ class OverlayService : Service() {
 
         val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
+        else @Suppress("DEPRECATION")
+            WindowManager.LayoutParams.TYPE_PHONE
 
         layoutParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -349,7 +381,11 @@ class OverlayService : Service() {
         try {
             windowManager?.addView(root, layoutParams)
         } catch (e: Exception) {
-            Toast.makeText(this, "Ошибка оверлея: ${e.message}", Toast.LENGTH_LONG).show()
+            Toast.makeText(
+                this,
+                "Ошибка оверлея: ${e.message}",
+                Toast.LENGTH_LONG
+            ).show()
         }
 
         applyDotColor()
@@ -380,7 +416,12 @@ class OverlayService : Service() {
                         moved = true
                         val newY = (initialY + dy.toInt()).coerceAtLeast(0)
                         layoutParams?.y = newY
-                        try { windowManager?.updateViewLayout(rootView, layoutParams) } catch (_: Exception) {}
+                        try {
+                            windowManager?.updateViewLayout(
+                                rootView,
+                                layoutParams
+                            )
+                        } catch (_: Exception) {}
                     }
                     true
                 }
@@ -410,12 +451,15 @@ class OverlayService : Service() {
 
     private fun currentActiveNameOrPlaceholder(): String {
         val id = currentActiveId ?: return "не выбрано"
-        return parsePoints(currentPointsJson).firstOrNull { it.first == id }?.second
+        return parsePoints(currentPointsJson)
+            .firstOrNull { it.first == id }?.second
             ?: "не выбрано"
     }
 
     private fun applyDotColor() {
-        dotView?.setTextColor(if (isRunning) COLOR_DOT_ACTIVE else COLOR_DOT_IDLE)
+        dotView?.setTextColor(
+            if (isRunning) COLOR_DOT_ACTIVE else COLOR_DOT_IDLE
+        )
     }
 
     private fun createMapView(): MapView {
@@ -445,15 +489,15 @@ class OverlayService : Service() {
         } catch (_: Exception) {}
     }
 
-    /**
-     * Точка с кодом домофона: id, name, lat, lon, doorCode.
-     */
+    // ===================== ДОМОФОНЫ =====================
+
+    /** Точка с кодом домофона: id, code, address, lat, lon. */
     private data class DoorPoint(
         val id: String,
-        val name: String,
+        val code: String,
+        val address: String,
         val lat: Double,
-        val lon: Double,
-        val doorCode: String
+        val lon: Double
     )
 
     private fun parseDoorPoints(json: String): List<DoorPoint> {
@@ -464,13 +508,13 @@ class OverlayService : Service() {
                 val obj = arr.getJSONObject(i)
                 val id = obj.optString("id", "")
                 if (id.isEmpty()) continue
-                val code = obj.optString("doorCode", "")
+                val code = obj.optString("code", "")
                 if (code.isBlank()) continue
                 val lat = obj.optDouble("latitude", Double.NaN)
                 val lon = obj.optDouble("longitude", Double.NaN)
                 if (lat.isNaN() || lon.isNaN()) continue
-                val name = obj.optString("name", "точка")
-                out.add(DoorPoint(id, name, lat, lon, code))
+                val address = obj.optString("address", "")
+                out.add(DoorPoint(id, code, address, lat, lon))
             }
             out
         } catch (_: Exception) {
@@ -478,8 +522,13 @@ class OverlayService : Service() {
         }
     }
 
-    /** Расстояние между двумя точками в метрах (формула Haversine). */
-    private fun distanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+    /** Расстояние в метрах (Haversine). */
+    private fun distanceMeters(
+        lat1: Double,
+        lon1: Double,
+        lat2: Double,
+        lon2: Double
+    ): Double {
         val r = 6371000.0
         val phi1 = Math.toRadians(lat1)
         val phi2 = Math.toRadians(lat2)
@@ -491,11 +540,14 @@ class OverlayService : Service() {
     }
 
     /**
-     * Ищет ближайшую сохранённую точку с непустым doorCode
-     * в радиусе [DOOR_SEARCH_RADIUS_M] метров от координат заказа.
+     * Ищет ближайший сохранённый код домофона в радиусе
+     * [DOOR_SEARCH_RADIUS_M] метров от координат заказа.
      */
-    private fun findNearbyDoorCode(orderLat: Double, orderLon: Double): DoorPoint? {
-        val points = parseDoorPoints(currentPointsJson)
+    private fun findNearbyDoorCode(
+        orderLat: Double,
+        orderLon: Double
+    ): DoorPoint? {
+        val points = parseDoorPoints(currentDoorCodesJson)
         if (points.isEmpty()) return null
 
         var best: DoorPoint? = null
@@ -509,6 +561,8 @@ class OverlayService : Service() {
         }
         return best
     }
+
+    // ===================== БЛОК ЗАКАЗА =====================
 
     private fun rebuildOrderBlock() {
         val ctx = this
@@ -539,7 +593,7 @@ class OverlayService : Service() {
             setPadding(0, 0, 0, dp(6))
         })
 
-        // ==== КОД ДОМОФОНА ====
+        // ==== КОД ДОМОФОНА рядом с заказом ====
         val door = findNearbyDoorCode(lat, lon)
         if (door != null) {
             val doorRow = LinearLayout(ctx).apply {
@@ -554,7 +608,7 @@ class OverlayService : Service() {
                 setPadding(0, 0, dp(8), 0)
             })
             doorRow.addView(TextView(ctx).apply {
-                text = door.doorCode
+                text = door.code
                 setTextColor(COLOR_DOOR_OK)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
                 setTypeface(typeface, Typeface.BOLD)
@@ -591,13 +645,17 @@ class OverlayService : Service() {
             setPadding(dp(14), dp(12), dp(14), dp(12))
             background = roundedBg(COLOR_ACCENT, 12)
             setOnClickListener {
-                val ok = MockManager.start(this@OverlayService, lat, lon, 5.0, 0.0, 1000L)
+                val ok = MockManager.start(
+                    this@OverlayService, lat, lon, 5.0, 0.0, 1000L
+                )
                 isRunning = ok
                 OverlayPrefs.saveRunning(this@OverlayService, ok)
                 rebuildContent()
             }
             layoutParams = LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1f
             ).also { it.rightMargin = dp(6) }
         }
 
@@ -615,7 +673,9 @@ class OverlayService : Service() {
                 rebuildContent()
             }
             layoutParams = LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1f
             ).also { it.leftMargin = dp(6) }
         }
 
@@ -623,6 +683,8 @@ class OverlayService : Service() {
         row.addView(closeBtn)
         c.addView(row)
     }
+
+    // ===================== ПОЛНАЯ КАРТА =====================
 
     private fun openFullMap(lat: Double, lon: Double) {
         closeFullMap()
@@ -639,10 +701,13 @@ class OverlayService : Service() {
 
         val container = FrameLayout(ctx)
         fullMap?.let {
-            container.addView(it, FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            ))
+            container.addView(
+                it,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+            )
         }
 
         val closeBtn = TextView(ctx).apply {
@@ -666,9 +731,14 @@ class OverlayService : Service() {
             orientation = LinearLayout.VERTICAL
             background = roundedBg(COLOR_HEADER_BG, 16)
             setPadding(dp(8), dp(8), dp(8), dp(8))
-            addView(container, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
-            ))
+            addView(
+                container,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    0,
+                    1f
+                )
+            )
         }
 
         val dm = resources.displayMetrics
@@ -677,7 +747,8 @@ class OverlayService : Service() {
 
         val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
+        else @Suppress("DEPRECATION")
+            WindowManager.LayoutParams.TYPE_PHONE
 
         fullMapLayoutParams = WindowManager.LayoutParams(
             w, h, type,
@@ -691,18 +762,26 @@ class OverlayService : Service() {
             windowManager?.addView(wrapper, fullMapLayoutParams)
             fullMapWrapper = wrapper
         } catch (e: Exception) {
-            Toast.makeText(this, "Ошибка карты: ${e.message}", Toast.LENGTH_LONG).show()
+            Toast.makeText(
+                this,
+                "Ошибка карты: ${e.message}",
+                Toast.LENGTH_LONG
+            ).show()
             closeFullMap()
         }
     }
 
     private fun closeFullMap() {
-        try { fullMapWrapper?.let { windowManager?.removeView(it) } } catch (_: Exception) {}
+        try {
+            fullMapWrapper?.let { windowManager?.removeView(it) }
+        } catch (_: Exception) {}
         fullMapWrapper = null
         fullMapLayoutParams = null
         try { fullMap?.onDetach() } catch (_: Exception) {}
         fullMap = null
     }
+
+    // ===================== РАСКРЫТЫЙ ВИД =====================
 
     private fun rebuildContent() {
         val ctx = this
@@ -712,23 +791,28 @@ class OverlayService : Service() {
         val hasOrder = OrderTargetStore.load(this) != null
         rebuildOrderBlock()
 
-        // Обновляем актуальное состояние MockManager
         isRunning = MockManager.isRunning()
         applyDotColor()
 
         if (expanded) {
-            orderContainer?.visibility = if (hasOrder) View.VISIBLE else View.GONE
+            orderContainer?.visibility =
+                if (hasOrder) View.VISIBLE else View.GONE
             container.visibility = View.VISIBLE
             arrowView?.text = "▼"
             activeLabel?.text = currentActiveNameOrPlaceholder()
 
             container.addView(View(ctx).apply {
                 layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(1)
-                ).also { it.topMargin = dp(8); it.bottomMargin = dp(8) }
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dp(1)
+                ).also {
+                    it.topMargin = dp(8)
+                    it.bottomMargin = dp(8)
+                }
                 setBackgroundColor(0x22FFFFFF)
             })
 
+            // ==== ТОЧКИ ДЛЯ ПОДМЕНЫ ====
             val points = parsePoints(currentPointsJson)
             if (points.isEmpty()) {
                 container.addView(TextView(ctx).apply {
@@ -741,13 +825,20 @@ class OverlayService : Service() {
                 points.forEach { (id, name) ->
                     val isActive = id == currentActiveId
                     val row = TextView(ctx).apply {
-                        text = (if (isActive) "● " else "○ ") + name
-                        setTextColor(if (isActive) COLOR_ACCENT else COLOR_TEXT)
-                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                        text =
+                            (if (isActive) "● " else "○ ") + name
+                        setTextColor(
+                            if (isActive) COLOR_ACCENT else COLOR_TEXT
+                        )
+                        setTextSize(
+                            TypedValue.COMPLEX_UNIT_SP, 14f
+                        )
                         setPadding(dp(4), dp(10), dp(4), dp(10))
                         setOnClickListener {
                             currentActiveId = id
-                            OverlayPrefs.saveActiveId(this@OverlayService, id)
+                            OverlayPrefs.saveActiveId(
+                                this@OverlayService, id
+                            )
                             activeLabel?.text = name
                             rebuildContent()
                         }
@@ -771,12 +862,15 @@ class OverlayService : Service() {
                     if (isRunning) {
                         MockManager.stop(this@OverlayService)
                         isRunning = false
-                        OverlayPrefs.saveRunning(this@OverlayService, false)
+                        OverlayPrefs.saveRunning(
+                            this@OverlayService, false
+                        )
                     } else {
                         val id = currentActiveId
                         if (id != null) {
-                            val point = parsePointsFull(currentPointsJson)
-                                .firstOrNull { it.first == id }
+                            val point = parsePointsFull(
+                                currentPointsJson
+                            ).firstOrNull { it.first == id }
                             if (point != null) {
                                 val ok = MockManager.start(
                                     this@OverlayService,
@@ -784,7 +878,9 @@ class OverlayService : Service() {
                                     point.fourth, 0.0, 1000L
                                 )
                                 isRunning = ok
-                                OverlayPrefs.saveRunning(this@OverlayService, ok)
+                                OverlayPrefs.saveRunning(
+                                    this@OverlayService, ok
+                                )
                             }
                         }
                     }
@@ -809,7 +905,9 @@ class OverlayService : Service() {
                 setOnClickListener {
                     MockManager.forceReset(this@OverlayService)
                     isRunning = false
-                    OverlayPrefs.saveRunning(this@OverlayService, false)
+                    OverlayPrefs.saveRunning(
+                        this@OverlayService, false
+                    )
                     Toast.makeText(
                         this@OverlayService,
                         "GPS восстановлен. Подожди 5-10 секунд.",
@@ -823,15 +921,85 @@ class OverlayService : Service() {
                 ).also { it.topMargin = dp(8) }
             }
             container.addView(restoreBtn)
+
+            // ==== ДОМОФОНЫ (список) ====
+            val doors = parseDoorPoints(currentDoorCodesJson)
+            if (doors.isNotEmpty()) {
+                container.addView(View(ctx).apply {
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        dp(1)
+                    ).also {
+                        it.topMargin = dp(12)
+                        it.bottomMargin = dp(8)
+                    }
+                    setBackgroundColor(0x22FFFFFF)
+                })
+                container.addView(TextView(ctx).apply {
+                    text = "Домофоны"
+                    setTextColor(COLOR_TEXT)
+                    setTextSize(
+                        TypedValue.COMPLEX_UNIT_SP, 13f
+                    )
+                    setTypeface(typeface, Typeface.BOLD)
+                    setPadding(0, dp(4), 0, dp(6))
+                })
+
+                // Ограничиваем высоту списка, чтобы не съело весь экран
+                val listWrapper = LinearLayout(ctx).apply {
+                    orientation = LinearLayout.VERTICAL
+                }
+
+                doors.forEach { d ->
+                    val row = LinearLayout(ctx).apply {
+                        orientation = LinearLayout.VERTICAL
+                        setPadding(dp(4), dp(8), dp(4), dp(8))
+                    }
+
+                    row.addView(TextView(ctx).apply {
+                        text = d.code
+                        setTextColor(COLOR_TEXT)
+                        setTextSize(
+                            TypedValue.COMPLEX_UNIT_SP, 15f
+                        )
+                        setTypeface(typeface, Typeface.BOLD)
+                    })
+
+                    if (d.address.isNotEmpty()) {
+                        row.addView(TextView(ctx).apply {
+                            text = d.address
+                            setTextColor(COLOR_MUTED)
+                            setTextSize(
+                                TypedValue.COMPLEX_UNIT_SP, 12f
+                            )
+                            setPadding(0, dp(2), 0, 0)
+                        })
+                    }
+
+                    listWrapper.addView(row)
+                }
+
+                // Скролл внутри списка: Android ScrollView
+                val scroll = android.widget.ScrollView(ctx)
+                scroll.addView(listWrapper)
+                val lp = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dp(180)
+                )
+                container.addView(scroll, lp)
+            }
+
         } else {
-            orderContainer?.visibility = if (hasOrder) View.VISIBLE else View.GONE
+            orderContainer?.visibility =
+                if (hasOrder) View.VISIBLE else View.GONE
             container.visibility = View.GONE
             arrowView?.text = "▼"
             activeLabel?.text = currentActiveNameOrPlaceholder()
         }
     }
 
-    /** id, name, lat, lon, accuracy для старта mock */
+    // ===================== ПАРСЕРЫ ТОЧЕК =====================
+
     private fun parsePointsFull(json: String): List<Quadruple> {
         return try {
             val arr = JSONArray(json)
@@ -846,20 +1014,23 @@ class OverlayService : Service() {
                 out.add(Quadruple(id, lat, lon, acc))
             }
             out
-        } catch (_: Exception) { emptyList() }
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
     data class Quadruple(
-        val first: String,   // id
-        val second: Double,  // lat
-        val third: Double,   // lon
-        val fourth: Double   // accuracy
+        val first: String,
+        val second: Double,
+        val third: Double,
+        val fourth: Double
     )
 
     private fun parsePoints(json: String): List<Pair<String, String>> {
         return try {
             val arr = JSONArray(json)
-            val out = ArrayList<Pair<String, String>>(arr.length())
+            val out =
+                ArrayList<Pair<String, String>>(arr.length())
             for (i in 0 until arr.length()) {
                 val obj: JSONObject = arr.getJSONObject(i)
                 val id = obj.optString("id", "")
@@ -867,7 +1038,9 @@ class OverlayService : Service() {
                 if (id.isNotEmpty()) out.add(id to name)
             }
             out
-        } catch (_: Exception) { emptyList() }
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
     private fun applyVisibility() {
@@ -877,7 +1050,11 @@ class OverlayService : Service() {
             v.visibility = View.VISIBLE
             return
         }
-        v.visibility = if (OverlayBridge.isTargetAppForeground) View.VISIBLE else View.GONE
+        v.visibility =
+            if (OverlayBridge.isTargetAppForeground)
+                View.VISIBLE
+            else
+                View.GONE
     }
 }
 
