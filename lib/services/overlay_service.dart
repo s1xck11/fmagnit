@@ -60,6 +60,14 @@ class OverlayService {
     });
   }
 
+  /// Передаёт в оверлей список кодов домофонов (JSON-массив).
+  /// Элемент: {id, code, address, latitude, longitude}
+  Future<void> updateDoorCodes({required String codesJson}) async {
+    await _channel.invokeMethod('updateDoorCodes', {
+      'codesJson': codesJson,
+    });
+  }
+
   /// Очищает координаты заказа, полученные из приложения доставки.
   Future<void> clearOrderTarget() async {
     await _channel.invokeMethod('clearOrderTarget');
