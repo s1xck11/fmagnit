@@ -15,6 +15,7 @@ object OverlayPrefs {
     private const val KEY_ACTIVE_ID = "active_id"
     private const val KEY_IS_RUNNING = "is_running"
     private const val KEY_SERVICE_ON = "is_service_on"
+    private const val KEY_DOOR_CODES_JSON = "door_codes_json"
 
     private fun prefs(ctx: Context): SharedPreferences =
         ctx.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -25,6 +26,14 @@ object OverlayPrefs {
 
     fun loadPoints(ctx: Context): String {
         return prefs(ctx).getString(KEY_POINTS_JSON, "[]") ?: "[]"
+    }
+
+    fun saveDoorCodes(ctx: Context, json: String) {
+        prefs(ctx).edit().putString(KEY_DOOR_CODES_JSON, json).apply()
+    }
+
+    fun loadDoorCodes(ctx: Context): String {
+        return prefs(ctx).getString(KEY_DOOR_CODES_JSON, "[]") ?: "[]"
     }
 
     fun saveActiveId(ctx: Context, id: String?) {
