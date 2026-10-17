@@ -153,12 +153,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Future<void> _pushPointsToOverlay() async {
     // ВАЖНО: отправляем полные данные, чтобы оверлей мог запускать mock
+    // и показывать код домофона для ближайшей точки.
     final json = jsonEncode(_waypoints.map((w) => {
           'id': w.id,
           'name': w.name,
           'latitude': w.latitude,
           'longitude': w.longitude,
           'accuracy': w.accuracy,
+          'doorCode': w.doorCode,
         }).toList());
     await _overlay.updatePoints(pointsJson: json, activeId: _activeId);
   }
@@ -477,6 +479,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Widget _buildWaypointTile(Waypoint w) {
+    final hasCode = w.doorCode.isNotEmpty;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
       child: Container(
@@ -488,13 +492,46 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
-          title: Text(
-            w.name,
-            style: const TextStyle(
-              color: FMagnitTheme.textPrimary,
-              fontWeight: FontWeight.w600,
-              fontSize: 15,
-            ),
+          title: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  w.name,
+                  style: const TextStyle(
+                    color: FMagnitTheme.textPrimary,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 15,
+                  ),
+                ),
+              ),
+              if (hasCode) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: FMagnitTheme.accent.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.vpn_key,
+                          size: 12, color: FMagnitTheme.accent),
+                      const SizedBox(width: 4),
+                      Text(
+                        w.doorCode,
+                        style: const TextStyle(
+                          color: FMagnitTheme.accent,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
           ),
           subtitle: Padding(
             padding: const EdgeInsets.only(top: 4),
@@ -1031,7 +1068,8 @@ class _PickWaypointDialog extends StatelessWidget {
               subtitle: Text(
                 '${w.latitude.toStringAsFixed(6)}, '
                 '${w.longitude.toStringAsFixed(6)}'
-                '${w.group.isNotEmpty ? '  •  ${w.group}' : ''}',
+                '${w.group.isNotEmpty ? '  •  ${w.group}' : ''}'
+                '${w.doorCode.isNotEmpty ? '  •  🔑 ${w.doorCode}' : ''}',
                 style: const TextStyle(fontSize: 11),
               ),
               onTap: () => Navigator.of(context).pop(w),
@@ -1073,6 +1111,7 @@ class _WaypointDialog extends StatefulWidget {
 class _WaypointDialogState extends State<_WaypointDialog> {
   late final TextEditingController _nameCtrl;
   late final TextEditingController _groupCtrl;
+  late final TextEditingController _doorCtrl;
   late final TextEditingController _latCtrl;
   late final TextEditingController _lonCtrl;
   late final TextEditingController _accCtrl;
@@ -1083,6 +1122,7 @@ class _WaypointDialogState extends State<_WaypointDialog> {
     final w = widget.initial;
     _nameCtrl = TextEditingController(text: w?.name ?? '');
     _groupCtrl = TextEditingController(text: w?.group ?? '');
+    _doorCtrl = TextEditingController(text: w?.doorCode ?? '');
     _latCtrl = TextEditingController(
       text: (w?.latitude ?? widget.presetLat)?.toString() ?? '',
     );
@@ -1098,6 +1138,7 @@ class _WaypointDialogState extends State<_WaypointDialog> {
   void dispose() {
     _nameCtrl.dispose();
     _groupCtrl.dispose();
+    _doorCtrl.dispose();
     _latCtrl.dispose();
     _lonCtrl.dispose();
     _accCtrl.dispose();
@@ -1107,6 +1148,7 @@ class _WaypointDialogState extends State<_WaypointDialog> {
   void _save() {
     final name = _nameCtrl.text.trim();
     final group = _groupCtrl.text.trim();
+    final doorCode = _doorCtrl.text.trim();
     final lat = double.tryParse(_latCtrl.text.trim());
     final lon = double.tryParse(_lonCtrl.text.trim());
     final acc = double.tryParse(_accCtrl.text.trim()) ?? 3.0;
@@ -1122,6 +1164,7 @@ class _WaypointDialogState extends State<_WaypointDialog> {
         ? widget.initial!.copyWith(
             name: name,
             group: group,
+            doorCode: doorCode,
             latitude: lat,
             longitude: lon,
             accuracy: acc,
@@ -1129,6 +1172,7 @@ class _WaypointDialogState extends State<_WaypointDialog> {
         : Waypoint(
             name: name,
             group: group,
+            doorCode: doorCode,
             latitude: lat,
             longitude: lon,
             accuracy: acc,
@@ -1185,6 +1229,15 @@ class _WaypointDialogState extends State<_WaypointDialog> {
                                 ))
                             .toList(),
                       ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _doorCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Код домофона (необязательно)',
+                hintText: 'например, 1234#',
+                prefixIcon: Icon(Icons.vpn_key, size: 20),
               ),
             ),
             const SizedBox(height: 10),
