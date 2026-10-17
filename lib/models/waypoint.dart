@@ -8,6 +8,7 @@ class Waypoint {
   double longitude;
   double altitude;
   double accuracy;
+  String doorCode;
   DateTime updatedAt;
 
   Waypoint({
@@ -18,6 +19,7 @@ class Waypoint {
     required this.longitude,
     this.altitude = 0.0,
     this.accuracy = 3.0,
+    this.doorCode = '',
     DateTime? updatedAt,
   })  : id = id ?? const Uuid().v4(),
         updatedAt = updatedAt ?? DateTime.now();
@@ -29,6 +31,7 @@ class Waypoint {
     double? longitude,
     double? altitude,
     double? accuracy,
+    String? doorCode,
   }) {
     return Waypoint(
       id: id,
@@ -38,6 +41,7 @@ class Waypoint {
       longitude: longitude ?? this.longitude,
       altitude: altitude ?? this.altitude,
       accuracy: accuracy ?? this.accuracy,
+      doorCode: doorCode ?? this.doorCode,
       updatedAt: DateTime.now(),
     );
   }
@@ -50,6 +54,7 @@ class Waypoint {
         'longitude': longitude,
         'altitude': altitude,
         'accuracy': accuracy,
+        if (doorCode.isNotEmpty) 'doorCode': doorCode,
         'updatedAt': updatedAt.toIso8601String(),
       };
 
@@ -62,6 +67,7 @@ class Waypoint {
       longitude: (json['longitude'] as num).toDouble(),
       altitude: (json['altitude'] as num?)?.toDouble() ?? 0.0,
       accuracy: (json['accuracy'] as num?)?.toDouble() ?? 3.0,
+      doorCode: (json['doorCode'] as String?) ?? '',
       updatedAt: json['updatedAt'] != null
           ? DateTime.parse(json['updatedAt'] as String)
           : DateTime.now(),
@@ -70,5 +76,5 @@ class Waypoint {
 
   @override
   String toString() =>
-      'Waypoint($name @ $latitude, $longitude, group=$group, acc=$accuracy)';
+      'Waypoint($name @ $latitude, $longitude, group=$group, acc=$accuracy, door=$doorCode)';
 }
