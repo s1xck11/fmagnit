@@ -56,9 +56,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _refreshCrashLog();
     _overlay.setStartHandler(_onOverlayStartRequested);
 
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await _mock.forceResetMock();
-    });
+    // forceResetMock НЕ вызываем при старте — иначе сбрасывается текущий mock
+    // (кнопка "Восстановить GPS" есть в оверлее и в меню)
 
     _stateTimer = Timer.periodic(const Duration(seconds: 2), (_) {
       _pollOverlayState();
@@ -153,9 +152,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Future<void> _pushPointsToOverlay() async {
+    // ВАЖНО: отправляем полные данные, чтобы оверлей мог запускать mock
     final json = jsonEncode(_waypoints.map((w) => {
           'id': w.id,
           'name': w.name,
+          'latitude': w.latitude,
+          'longitude': w.longitude,
+          'accuracy': w.accuracy,
         }).toList());
     await _overlay.updatePoints(pointsJson: json, activeId: _activeId);
   }
