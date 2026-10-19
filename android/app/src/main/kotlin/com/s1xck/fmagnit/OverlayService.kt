@@ -1,5 +1,6 @@
 package com.s1xck.fmagnit
 
+import android.app.AlertDialog
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -7,6 +8,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -16,23 +18,30 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
+import android.text.InputType
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import org.json.JSONArray
 import org.json.JSONObject
 import org.osmdroid.config.Configuration
+import org.osmdroid.events.MapListener
+import org.osmdroid.events.ScrollEvent
+import org.osmdroid.events.ZoomEvent
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
+import org.osmdroid.views.overlay.gestures.RotationGestureOverlay
 import java.io.File
 import java.util.Locale
 import kotlin.math.asin
@@ -56,6 +65,9 @@ class OverlayService : Service() {
         private const val COLOR_ACCENT = 0xFFE30613.toInt()
         private const val COLOR_INACTIVE = 0xFF2A2A2A.toInt()
         private const val COLOR_DOOR_OK = 0xFF009E27.toInt()
+        private const val COLOR_MARKER_BG = 0xFFE30613.toInt()
+        private const val COLOR_PLATE_BG = 0xFFFFFFFF.toInt()
+        private const val COLOR_PLATE_TEXT = 0xFF1E1E1E.toInt()
 
         private const val HEADER_HEIGHT_DP = 56
         private const val TITLE_FONT_SP = 20f
@@ -63,7 +75,7 @@ class OverlayService : Service() {
         private const val DOT_SIZE_SP = 14f
 
         // Радиус поиска кода домофона (метры)
-        private const val DOOR_SEARCH_RADIUS_M = 30.0
+        private const val DOOR_SEARCH_RADIUS_M = 50.0
 
         const val ACTION_START = "com.s1xck.fmagnit.OVERLAY_START"
         const val ACTION_STOP = "com.s1xck.fmagnit.OVERLAY_STOP"
@@ -82,6 +94,9 @@ class OverlayService : Service() {
         const val EXTRA_ORDER_LAT = "order_lat"
         const val EXTRA_ORDER_LON = "order_lon"
 
+        const val ACTION_DOOR_CODES_CHANGED =
+            "com.s1xck.fmagnit.DOOR_CODES_CHANGED"
+
         private const val TILE_CACHE_BYTES = 100L * 1024L * 1024L
 
         @Volatile var currentPointsJson: String = "[]"
@@ -94,6 +109,7 @@ class OverlayService : Service() {
     private var layoutParams: WindowManager.LayoutParams? = null
 
     private var expanded = false
+    private var doorsExpanded = false
     private var isRunning = false
 
     private val handler = Handler(Looper.getMainLooper())
@@ -108,6 +124,7 @@ class OverlayService : Service() {
     private var fullMap: MapView? = null
     private var fullMapWrapper: View? = null
     private var fullMapLayoutParams: WindowManager.LayoutParams? = null
+    private var resetNorthButton: TextView? = null
 
     private var wakeLock: PowerManager.WakeLock? = null
 
@@ -462,6 +479,8 @@ class OverlayService : Service() {
         )
     }
 
+    // ===================== КАРТА =====================
+
     private fun createMapView(): MapView {
         val ctx = this
         val map = MapView(ctx)
@@ -475,29 +494,123 @@ class OverlayService : Service() {
         return map
     }
 
-    private fun addMarker(map: MapView, lat: Double, lon: Double) {
+    /**
+     * Маркер заказа — стандартный красный пин osmdroid.
+     */
+    private fun addOrderMarker(map: MapView, lat: Double, lon: Double) {
         try {
-            map.overlays.clear()
             val marker = Marker(map)
             marker.position = GeoPoint(lat, lon)
             marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
             marker.title = "Заказ"
             map.overlays.add(marker)
-            map.controller.setCenter(GeoPoint(lat, lon))
-            map.controller.setZoom(17.0)
-            map.invalidate()
         } catch (_: Exception) {}
+    }
+
+    /**
+     * Маркер Waypoint — красный квадрат с буквой «М» и белой
+     * плашкой с названием точки под ним.
+     * Тап по маркеру — ничего (по требованию).
+     */
+    private fun addWaypointMarker(
+        map: MapView,
+        lat: Double,
+        lon: Double,
+        name: String
+    ) {
+        try {
+            val marker = Marker(map)
+            marker.position = GeoPoint(lat, lon)
+            marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+            marker.title = null
+            marker.setOnMarkerClickListener { _, _ ->
+                // По требованию — ничего не делаем, только гасим
+                true
+            }
+
+            // Иконка: красный квадрат с буквой «М»
+            val ctx = this
+            val sizePx = dp(28)
+            val square = TextView(ctx).apply {
+                text = "М"
+                setTextColor(Color.WHITE)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                setTypeface(typeface, Typeface.BOLD)
+                gravity = Gravity.CENTER
+                background = roundedBg(COLOR_MARKER_BG, 6)
+                width = sizePx
+                height = sizePx
+            }
+            marker.icon = android.graphics.drawable.BitmapDrawable(
+                resources,
+                viewToBitmap(square, sizePx, sizePx)
+            )
+
+            map.overlays.add(marker)
+
+            // Плашка с названием — отдельный маркер поверх, чуть выше
+            if (name.isNotEmpty()) {
+                val label = Marker(map)
+                label.position = GeoPoint(lat, lon)
+                label.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_TOP)
+                label.title = null
+                label.setOnMarkerClickListener { _, _ -> true }
+
+                val plate = TextView(ctx).apply {
+                    text = name
+                    setTextColor(COLOR_PLATE_TEXT)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                    setPadding(dp(6), dp(2), dp(6), dp(2))
+                    background = roundedBg(COLOR_PLATE_BG, 4)
+                    maxLines = 1
+                }
+                val wPx = dp(140)
+                val hPx = dp(22)
+                label.icon = android.graphics.drawable.BitmapDrawable(
+                    resources,
+                    viewToBitmap(plate, wPx, hPx, exactWidth = false)
+                )
+                map.overlays.add(label)
+            }
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * Рендерит View в Bitmap для иконки маркера.
+     * Если exactWidth=false, ширина будет по wrap_content (для плашки).
+     */
+    private fun viewToBitmap(
+        view: View,
+        widthPx: Int,
+        heightPx: Int,
+        exactWidth: Boolean = true
+    ): android.graphics.Bitmap {
+        val wSpec = if (exactWidth)
+            View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY)
+        else
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+        val hSpec = View.MeasureSpec.makeMeasureSpec(heightPx, View.MeasureSpec.AT_MOST)
+        view.measure(wSpec, hSpec)
+        val w = if (exactWidth) widthPx else view.measuredWidth.coerceAtLeast(1)
+        val h = heightPx
+        view.layout(0, 0, w, h)
+        val bmp = android.graphics.Bitmap.createBitmap(
+            w, h, android.graphics.Bitmap.Config.ARGB_8888
+        )
+        val canvas = android.graphics.Canvas(bmp)
+        view.draw(canvas)
+        return bmp
     }
 
     // ===================== ДОМОФОНЫ =====================
 
-    /** Точка с кодом домофона: id, code, address, lat, lon. */
     private data class DoorPoint(
         val id: String,
         val code: String,
         val address: String,
         val lat: Double,
-        val lon: Double
+        val lon: Double,
+        val distance: Double = 0.0
     )
 
     private fun parseDoorPoints(json: String): List<DoorPoint> {
@@ -522,7 +635,6 @@ class OverlayService : Service() {
         }
     }
 
-    /** Расстояние в метрах (Haversine). */
     private fun distanceMeters(
         lat1: Double,
         lon1: Double,
@@ -540,26 +652,60 @@ class OverlayService : Service() {
     }
 
     /**
-     * Ищет ближайший сохранённый код домофона в радиусе
-     * [DOOR_SEARCH_RADIUS_M] метров от координат заказа.
+     * Возвращает ВСЕ коды в радиусе 50 м, отсортированные
+     * по расстоянию (ближайший первым).
      */
-    private fun findNearbyDoorCode(
+    private fun findNearbyDoorCodes(
         orderLat: Double,
         orderLon: Double
-    ): DoorPoint? {
+    ): List<DoorPoint> {
         val points = parseDoorPoints(currentDoorCodesJson)
-        if (points.isEmpty()) return null
+        if (points.isEmpty()) return emptyList()
 
-        var best: DoorPoint? = null
-        var bestDist = Double.MAX_VALUE
-        for (p in points) {
-            val d = distanceMeters(orderLat, orderLon, p.lat, p.lon)
-            if (d <= DOOR_SEARCH_RADIUS_M && d < bestDist) {
-                bestDist = d
-                best = p
+        val withDist = points.map { p ->
+            p.copy(
+                distance = distanceMeters(
+                    orderLat, orderLon, p.lat, p.lon
+                )
+            )
+        }.filter { it.distance <= DOOR_SEARCH_RADIUS_M }
+
+        return withDist.sortedBy { it.distance }
+    }
+
+    /**
+     * Есть ли в радиусе 50 м хоть одна точка без кода?
+     * Нужно для сообщения «кода пока нет».
+     */
+    private fun hasNearbyPointWithoutCode(
+        orderLat: Double,
+        orderLon: Double
+    ): Boolean {
+        // Идём по всем точкам (с кодом и без), ищем в радиусе
+        return try {
+            val arr = JSONArray(currentDoorCodesJson)
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                val lat = obj.optDouble("latitude", Double.NaN)
+                val lon = obj.optDouble("longitude", Double.NaN)
+                if (lat.isNaN() || lon.isNaN()) continue
+                val d = distanceMeters(orderLat, orderLon, lat, lon)
+                if (d <= DOOR_SEARCH_RADIUS_M) {
+                    val code = obj.optString("code", "")
+                    if (code.isBlank()) return true
+                }
             }
+            false
+        } catch (_: Exception) {
+            false
         }
-        return best
+    }
+
+    private fun reloadDoorCodesFromFile() {
+        try {
+            currentDoorCodesJson = DoorCodeNativeStore.asJsonArrayString(this)
+            OverlayPrefs.saveDoorCodes(this, currentDoorCodesJson)
+        } catch (_: Exception) {}
     }
 
     // ===================== БЛОК ЗАКАЗА =====================
@@ -593,27 +739,24 @@ class OverlayService : Service() {
             setPadding(0, 0, 0, dp(6))
         })
 
-        // ==== КОД ДОМОФОНА рядом с заказом ====
-        val door = findNearbyDoorCode(lat, lon)
-        if (door != null) {
-            val doorRow = LinearLayout(ctx).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(0, dp(2), 0, dp(10))
-            }
-            doorRow.addView(TextView(ctx).apply {
-                text = "Домофон:"
+        // ==== КОДЫ ДОМОФОНОВ РЯДОМ (50 м, через запятую) ====
+        val nearby = findNearbyDoorCodes(lat, lon)
+        if (nearby.isNotEmpty()) {
+            val codesText = nearby.joinToString(", ") { it.code }
+            c.addView(TextView(ctx).apply {
+                text = "Возможный код домофона: $codesText"
+                setTextColor(COLOR_DOOR_OK)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                setTypeface(typeface, Typeface.BOLD)
+                setPadding(0, 0, 0, dp(10))
+            })
+        } else if (hasNearbyPointWithoutCode(lat, lon)) {
+            c.addView(TextView(ctx).apply {
+                text = "Возможный код домофона: кода пока нет"
                 setTextColor(COLOR_MUTED)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                setPadding(0, 0, dp(8), 0)
+                setPadding(0, 0, 0, dp(10))
             })
-            doorRow.addView(TextView(ctx).apply {
-                text = door.code
-                setTextColor(COLOR_DOOR_OK)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-                setTypeface(typeface, Typeface.BOLD)
-            })
-            c.addView(doorRow)
         }
 
         c.addView(TextView(ctx).apply {
@@ -684,6 +827,103 @@ class OverlayService : Service() {
         c.addView(row)
     }
 
+    // ===================== GPS-КНОПКА + ДИАЛОГ =====================
+
+    /**
+     * Берёт текущие координаты (mock, если запущен, иначе реальные)
+     * и открывает диалог «Адрес» + «Код домофона».
+     * Сохраняет в door_codes.json через DoorCodeNativeStore.
+     */
+    private fun openAddDoorCodeDialog() {
+        val last: android.location.Location? = try {
+            MockManager.getBestRealLocation(this)
+        } catch (_: Exception) {
+            null
+        }
+
+        if (last == null) {
+            Toast.makeText(
+                this,
+                "Нет координат. Включи GPS или запусти mock.",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+
+        val lat = last.latitude
+        val lon = last.longitude
+
+        val ctx = this
+        val wrapper = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(8), dp(24), 0)
+        }
+
+        val addrEt = EditText(ctx).apply {
+            hint = "Адрес или название"
+            setSingleLine(true)
+        }
+        val codeEt = EditText(ctx).apply {
+            hint = "Код домофона (например, 1234#)"
+            setSingleLine(true)
+            inputType = InputType.TYPE_CLASS_TEXT
+        }
+        val coordsTv = TextView(ctx).apply {
+            text = String.format(
+                Locale.US,
+                "Координаты: %.6f, %.6f",
+                lat, lon
+            )
+            setTextColor(COLOR_MUTED)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setPadding(0, dp(8), 0, 0)
+        }
+
+        wrapper.addView(addrEt)
+        wrapper.addView(codeEt)
+        wrapper.addView(coordsTv)
+
+        val dialog = AlertDialog.Builder(ctx)
+            .setTitle("Новый код домофона")
+            .setView(wrapper)
+            .setPositiveButton("Сохранить", null)
+            .setNegativeButton("Отмена") { d, _ -> d.dismiss() }
+            .create()
+
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                .setOnClickListener {
+                    val addr = addrEt.text.toString().trim()
+                    val code = codeEt.text.toString().trim()
+                    if (code.isEmpty()) {
+                        codeEt.error = "Введи код"
+                        return@setOnClickListener
+                    }
+                    val newId = DoorCodeNativeStore.add(
+                        ctx, code, addr, lat, lon
+                    )
+                    if (newId != null) {
+                        reloadDoorCodesFromFile()
+                        // Сообщаем Flutter, что коды изменились
+                        val bcast = Intent(ACTION_DOOR_CODES_CHANGED)
+                        bcast.setPackage(packageName)
+                        try { sendBroadcast(bcast) } catch (_: Exception) {}
+                        dialog.dismiss()
+                        rebuildContent()
+                        Toast.makeText(
+                            ctx, "Код сохранён", Toast.LENGTH_SHORT
+                        ).show()
+                    } else {
+                        Toast.makeText(
+                            ctx, "Не удалось сохранить", Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+        }
+
+        dialog.show()
+    }
+
     // ===================== ПОЛНАЯ КАРТА =====================
 
     private fun openFullMap(lat: Double, lon: Double) {
@@ -697,7 +937,28 @@ class OverlayService : Service() {
         val ctx = this
 
         fullMap = createMapView()
-        fullMap?.let { addMarker(it, lat, lon) }
+        fullMap?.let { map ->
+            // Маркер заказа
+            addOrderMarker(map, lat, lon)
+
+            // Все Waypoint как красные квадраты с «М» и плашкой
+            val pts = parsePointsFullWithName(currentPointsJson)
+            pts.forEach { (_, name, pLat, pLon, _) ->
+                addWaypointMarker(map, pLat, pLon, name)
+            }
+
+            // Вращение двумя пальцами
+            try {
+                val rotation = RotationGestureOverlay(map)
+                rotation.isEnabled = true
+                map.overlays.add(rotation)
+            } catch (_: Exception) {}
+
+            // Центр и зум по заказу
+            map.controller.setCenter(GeoPoint(lat, lon))
+            map.controller.setZoom(17.0)
+            map.invalidate()
+        }
 
         val container = FrameLayout(ctx)
         fullMap?.let {
@@ -710,6 +971,7 @@ class OverlayService : Service() {
             )
         }
 
+        // Кнопка закрытия
         val closeBtn = TextView(ctx).apply {
             text = "×"
             setTextColor(COLOR_TEXT)
@@ -726,6 +988,54 @@ class OverlayService : Service() {
             rightMargin = dp(12)
         }
         container.addView(closeBtn, closeLp)
+
+        // Кнопка «N» — сброс на север (появляется при повороте)
+        val north = TextView(ctx).apply {
+            text = "N"
+            setTextColor(COLOR_TEXT)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            background = roundedBg(COLOR_HEADER_BG, 20)
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+            visibility = View.GONE
+            setOnClickListener {
+                fullMap?.mapOrientation = 0f
+                fullMap?.invalidate()
+                visibility = View.GONE
+            }
+        }
+        resetNorthButton = north
+
+        val northLp = FrameLayout.LayoutParams(dp(44), dp(44)).apply {
+            gravity = Gravity.TOP or Gravity.START
+            topMargin = dp(12)
+            leftMargin = dp(12)
+        }
+        container.addView(north, northLp)
+
+        // Слушаем изменение поворота карты, чтобы показать/скрыть «N»
+        try {
+            fullMap?.addMapListener(object : MapListener {
+                override fun onScroll(event: ScrollEvent?): Boolean = false
+                override fun onZoom(event: ZoomEvent?): Boolean = false
+            })
+        } catch (_: Exception) {}
+
+        // Периодически проверяем поворот — простой и надёжный путь
+        val orientationTicker = object : Runnable {
+            override fun run() {
+                try {
+                    val m = fullMap ?: return
+                    val bearing = m.mapOrientation
+                    val visible = Math.abs(bearing) > 1f
+                    resetNorthButton?.visibility =
+                        if (visible) View.VISIBLE else View.GONE
+                } catch (_: Exception) {}
+                handler.postDelayed(this, 300L)
+            }
+        }
+        handler.post(orientationTicker)
 
         val wrapper = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
@@ -777,6 +1087,7 @@ class OverlayService : Service() {
         } catch (_: Exception) {}
         fullMapWrapper = null
         fullMapLayoutParams = null
+        resetNorthButton = null
         try { fullMap?.onDetach() } catch (_: Exception) {}
         fullMap = null
     }
@@ -922,71 +1233,103 @@ class OverlayService : Service() {
             }
             container.addView(restoreBtn)
 
-            // ==== ДОМОФОНЫ (список) ====
-            val doors = parseDoorPoints(currentDoorCodesJson)
-            if (doors.isNotEmpty()) {
-                container.addView(View(ctx).apply {
-                    layoutParams = LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        dp(1)
-                    ).also {
-                        it.topMargin = dp(12)
-                        it.bottomMargin = dp(8)
-                    }
-                    setBackgroundColor(0x22FFFFFF)
-                })
-                container.addView(TextView(ctx).apply {
-                    text = "Домофоны"
-                    setTextColor(COLOR_TEXT)
-                    setTextSize(
-                        TypedValue.COMPLEX_UNIT_SP, 13f
-                    )
-                    setTypeface(typeface, Typeface.BOLD)
-                    setPadding(0, dp(4), 0, dp(6))
-                })
-
-                // Ограничиваем высоту списка, чтобы не съело весь экран
-                val listWrapper = LinearLayout(ctx).apply {
-                    orientation = LinearLayout.VERTICAL
-                }
-
-                doors.forEach { d ->
-                    val row = LinearLayout(ctx).apply {
-                        orientation = LinearLayout.VERTICAL
-                        setPadding(dp(4), dp(8), dp(4), dp(8))
-                    }
-
-                    row.addView(TextView(ctx).apply {
-                        text = d.code
-                        setTextColor(COLOR_TEXT)
-                        setTextSize(
-                            TypedValue.COMPLEX_UNIT_SP, 15f
-                        )
-                        setTypeface(typeface, Typeface.BOLD)
-                    })
-
-                    if (d.address.isNotEmpty()) {
-                        row.addView(TextView(ctx).apply {
-                            text = d.address
-                            setTextColor(COLOR_MUTED)
-                            setTextSize(
-                                TypedValue.COMPLEX_UNIT_SP, 12f
-                            )
-                            setPadding(0, dp(2), 0, 0)
-                        })
-                    }
-
-                    listWrapper.addView(row)
-                }
-
-                // Скролл внутри списка: Android ScrollView
-                val scroll = android.widget.ScrollView(ctx)
-                scroll.addView(listWrapper)
-                val lp = LinearLayout.LayoutParams(
+            // ==== ДОМОФОНЫ (выпадающая секция) ====
+            container.addView(View(ctx).apply {
+                layoutParams = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
-                    dp(180)
+                    dp(1)
+                ).also {
+                    it.topMargin = dp(12)
+                    it.bottomMargin = dp(4)
+                }
+                setBackgroundColor(0x22FFFFFF)
+            })
+
+            val doorsHeader = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(4), dp(8), dp(4), dp(8))
+                setOnClickListener {
+                    doorsExpanded = !doorsExpanded
+                    rebuildContent()
+                }
+            }
+            doorsHeader.addView(TextView(ctx).apply {
+                text = "Домофоны"
+                setTextColor(COLOR_TEXT)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                setTypeface(typeface, Typeface.BOLD)
+                layoutParams = LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
                 )
-                container.addView(scroll, lp)
+            })
+            doorsHeader.addView(TextView(ctx).apply {
+                text = if (doorsExpanded) "▲" else "▼"
+                setTextColor(COLOR_MUTED)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                setPadding(dp(8), 0, dp(8), 0)
+            })
+
+            // GPS-кнопка добавления нового кода
+            doorsHeader.addView(TextView(ctx).apply {
+                text = "📍"
+                setTextColor(COLOR_TEXT)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+                setPadding(dp(12), dp(4), dp(8), dp(4))
+                setOnClickListener { openAddDoorCodeDialog() }
+            })
+            container.addView(doorsHeader)
+
+            if (doorsExpanded) {
+                val doors = parseDoorPoints(currentDoorCodesJson)
+                if (doors.isEmpty()) {
+                    container.addView(TextView(ctx).apply {
+                        text = "Пока нет кодов. Нажми 📍 чтобы добавить."
+                        setTextColor(COLOR_MUTED)
+                        setTextSize(
+                            TypedValue.COMPLEX_UNIT_SP, 12f
+                        )
+                        setPadding(dp(4), dp(6), dp(4), dp(6))
+                    })
+                } else {
+                    val listWrapper = LinearLayout(ctx).apply {
+                        orientation = LinearLayout.VERTICAL
+                    }
+                    doors.forEach { d ->
+                        val row = LinearLayout(ctx).apply {
+                            orientation = LinearLayout.VERTICAL
+                            setPadding(dp(4), dp(8), dp(4), dp(8))
+                        }
+                        row.addView(TextView(ctx).apply {
+                            text = d.code
+                            setTextColor(COLOR_TEXT)
+                            setTextSize(
+                                TypedValue.COMPLEX_UNIT_SP, 15f
+                            )
+                            setTypeface(typeface, Typeface.BOLD)
+                        })
+                        if (d.address.isNotEmpty()) {
+                            row.addView(TextView(ctx).apply {
+                                text = d.address
+                                setTextColor(COLOR_MUTED)
+                                setTextSize(
+                                    TypedValue.COMPLEX_UNIT_SP, 12f
+                                )
+                                setPadding(0, dp(2), 0, 0)
+                            })
+                        }
+                        listWrapper.addView(row)
+                    }
+                    val scroll = ScrollView(ctx)
+                    scroll.addView(listWrapper)
+                    container.addView(
+                        scroll,
+                        LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            dp(180)
+                        )
+                    )
+                }
             }
 
         } else {
@@ -1019,11 +1362,43 @@ class OverlayService : Service() {
         }
     }
 
+    /** id, name, lat, lon, accuracy — для маркеров на карте */
+    private fun parsePointsFullWithName(
+        json: String
+    ): List<WaypointTuple> {
+        return try {
+            val arr = JSONArray(json)
+            val out = ArrayList<WaypointTuple>(arr.length())
+            for (i in 0 until arr.length()) {
+                val obj: JSONObject = arr.getJSONObject(i)
+                val id = obj.optString("id", "")
+                if (id.isEmpty()) continue
+                val name = obj.optString("name", "")
+                val lat = obj.optDouble("latitude", Double.NaN)
+                val lon = obj.optDouble("longitude", Double.NaN)
+                if (lat.isNaN() || lon.isNaN()) continue
+                val acc = obj.optDouble("accuracy", 3.0)
+                out.add(WaypointTuple(id, name, lat, lon, acc))
+            }
+            out
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
     data class Quadruple(
         val first: String,
         val second: Double,
         val third: Double,
         val fourth: Double
+    )
+
+    data class WaypointTuple(
+        val id: String,
+        val name: String,
+        val lat: Double,
+        val lon: Double,
+        val accuracy: Double
     )
 
     private fun parsePoints(json: String): List<Pair<String, String>> {
