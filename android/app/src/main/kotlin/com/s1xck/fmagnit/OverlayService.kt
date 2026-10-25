@@ -55,7 +55,6 @@ class OverlayService : Service() {
         const val NOTIFICATION_ID = 4201
         const val CHANNEL_ID = "fmagnit_overlay"
 
-        // ==== ЦВЕТА ====
         private const val COLOR_HEADER_BG = 0xFF1E1E1E.toInt()
         private const val COLOR_TEXT = 0xFFFFFFFF.toInt()
         private const val COLOR_DOT_ACTIVE = 0xFF009E27.toInt()
@@ -72,7 +71,6 @@ class OverlayService : Service() {
         private const val STATUS_FONT_SP = 12f
         private const val DOT_SIZE_SP = 14f
 
-        // Радиус поиска кода домофона (метры)
         private const val DOOR_SEARCH_RADIUS_M = 50.0
 
         const val ACTION_START = "com.s1xck.fmagnit.OVERLAY_START"
@@ -103,7 +101,7 @@ class OverlayService : Service() {
     }
 
     private var windowManager: WindowManager? = null
-    private var rootView: View? = null
+    private var rootView: LinearLayout? = null
     private var layoutParams: WindowManager.LayoutParams? = null
 
     private var expanded = false
@@ -112,6 +110,7 @@ class OverlayService : Service() {
 
     private val handler = Handler(Looper.getMainLooper())
 
+    private var headerView: LinearLayout? = null
     private var contentContainer: LinearLayout? = null
     private var activeLabel: TextView? = null
     private var dotView: TextView? = null
@@ -295,19 +294,11 @@ class OverlayService : Service() {
         return d
     }
 
-    /** Скруглены только правые углы (верхний и нижний). */
-    private fun roundedBgRightOnly(color: Int, radiusDp: Int): GradientDrawable {
-        val d = GradientDrawable()
-        d.shape = GradientDrawable.RECTANGLE
-        val r = dp(radiusDp).toFloat()
-        // порядок: TL-x TL-y TR-x TR-y BR-x BR-y BL-x BL-y
-        d.cornerRadii = floatArrayOf(
-            0f, 0f, r, r,
-            r, r, 0f, 0f
-        )
-        d.setColor(color)
-        return d
-    }
+    private fun windowType(): Int =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        else @Suppress("DEPRECATION")
+            WindowManager.LayoutParams.TYPE_PHONE
 
     private fun buildOverlayView() {
         val ctx = this
@@ -317,16 +308,19 @@ class OverlayService : Service() {
             orientation = LinearLayout.VERTICAL
         }
 
-        // ======== ШАПКА (левая половина) ========
+        // ======== ШАПКА (слева, ~50% ширины) ========
         val header = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(20), 0, dp(16), 0)
-            background = roundedBg(COLOR_HEADER_BG, 0)
+            background = roundedBg(COLOR_HEADER_BG, 8)
             layoutParams = LinearLayout.LayoutParams(
-                screenW / 2,
+                (screenW / 2) - dp(24),
                 dp(HEADER_HEIGHT_DP)
-            )
+            ).also {
+                it.leftMargin = dp(12)
+                it.topMargin = dp(12)
+            }
             setOnClickListener { toggleExpanded() }
         }
 
@@ -353,19 +347,21 @@ class OverlayService : Service() {
         header.addView(dotView)
         header.addView(activeLabel)
         root.addView(header)
+        headerView = header
 
         // ======== ОКОШКО (раскрытое состояние) ========
         contentContainer = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(4), dp(20), dp(16))
-            background = roundedBgRightOnly(COLOR_HEADER_BG, 12)
+            setPadding(dp(20), dp(8), dp(20), dp(16))
+            background = roundedBg(COLOR_HEADER_BG, 12)
             visibility = View.GONE
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).also {
-                it.topMargin = 0
+                it.leftMargin = dp(12)
                 it.rightMargin = dp(12)
+                it.topMargin = 0
                 it.bottomMargin = dp(12)
             }
         }
@@ -373,18 +369,13 @@ class OverlayService : Service() {
 
         rootView = root
 
-        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        else @Suppress("DEPRECATION")
-            WindowManager.LayoutParams.TYPE_PHONE
-
         layoutParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
+            screenW / 2,
             WindowManager.LayoutParams.WRAP_CONTENT,
-            type,
+            windowType(),
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-            PixelFormat.OPAQUE
+            PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             x = 0
@@ -408,6 +399,20 @@ class OverlayService : Service() {
     private fun toggleExpanded() {
         expanded = !expanded
         rebuildContent()
+        updateWindowSize()
+    }
+
+    /**
+     * Меняет ширину окна: свёрнуто — 50% (правая половина экрана
+     * вне окна, тапы идут в Магнит), раскрыто — на всю ширину.
+     */
+    private fun updateWindowSize() {
+        val lp = layoutParams ?: return
+        val screenW = resources.displayMetrics.widthPixels
+        lp.width = if (expanded) screenW else screenW / 2
+        try {
+            windowManager?.updateViewLayout(rootView, lp)
+        } catch (_: Exception) {}
     }
 
     private fun currentActiveNameOrPlaceholder(): String {
@@ -684,6 +689,9 @@ class OverlayService : Service() {
             .setNegativeButton("Отмена") { d, _ -> d.dismiss() }
             .create()
 
+        // Диалог должен рисоваться поверх оверлея
+        dialog.window?.setType(windowType())
+
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE)
                 .setOnClickListener {
@@ -724,6 +732,7 @@ class OverlayService : Service() {
 
         expanded = false
         contentContainer?.visibility = View.GONE
+        updateWindowSize()
 
         val ctx = this
 
@@ -838,13 +847,8 @@ class OverlayService : Service() {
         val w = (dm.widthPixels * 0.9).toInt()
         val h = (dm.heightPixels * 0.85).toInt()
 
-        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        else @Suppress("DEPRECATION")
-            WindowManager.LayoutParams.TYPE_PHONE
-
         fullMapLayoutParams = WindowManager.LayoutParams(
-            w, h, type,
+            w, h, windowType(),
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.OPAQUE
         ).apply {
@@ -886,7 +890,6 @@ class OverlayService : Service() {
         applyDotColor()
         activeLabel?.text = currentActiveNameOrPlaceholder()
 
-        // Свёрнуто — только шапка
         if (!expanded) {
             container.visibility = View.GONE
             return
@@ -1058,7 +1061,6 @@ class OverlayService : Service() {
             setPadding(dp(8), 0, dp(8), 0)
         })
 
-        // GPS-кнопка добавления нового кода
         doorsHeader.addView(TextView(ctx).apply {
             text = "📍"
             setTextColor(COLOR_TEXT)
@@ -1121,9 +1123,6 @@ class OverlayService : Service() {
         }
     }
 
-    /**
-     * Секция «Заказ клиента» — координаты, коды рядом, кнопки.
-     */
     private fun addOrderBlock(
         container: LinearLayout,
         lat: Double,
@@ -1136,7 +1135,7 @@ class OverlayService : Service() {
             setTextColor(COLOR_ACCENT)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             setTypeface(typeface, Typeface.BOLD)
-            setPadding(0, dp(8), 0, dp(4))
+            setPadding(0, dp(4), 0, dp(4))
         })
 
         container.addView(TextView(ctx).apply {
@@ -1220,6 +1219,7 @@ class OverlayService : Service() {
                 OrderTargetStore.clear(this@OverlayService)
                 expanded = false
                 rebuildContent()
+                updateWindowSize()
             }
             layoutParams = LinearLayout.LayoutParams(
                 0,
@@ -1233,7 +1233,7 @@ class OverlayService : Service() {
         container.addView(row)
     }
 
-    // ===================== ПАРСЕРЫ ТОЧЕК =====================
+    // ===================== ПАРСЕРЫ =====================
 
     private fun parsePointsFull(json: String): List<Quadruple> {
         return try {
