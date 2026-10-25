@@ -1,4 +1,4 @@
-# Flutter/Dart
+# Flutter / Dart
 .dart_tool/
 .packages
 .pub-cache/
@@ -9,9 +9,12 @@ build/
 
 # Android
 android/.gradle/
+android/captures/
 android/local.properties
 android/key.properties
-android/app/release/
+android/app/release.keystore
+android/app/*.keystore
+android/app/*.jks
 *.jks
 *.keystore
 
@@ -22,8 +25,3 @@ android/app/release/
 
 # OS
 .DS_Store
-Thumbs.db
-
-# Artifacts
-*.apk
-*.aab
