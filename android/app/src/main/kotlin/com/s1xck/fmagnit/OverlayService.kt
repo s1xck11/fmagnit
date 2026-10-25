@@ -101,19 +101,24 @@ class OverlayService : Service() {
     }
 
     private var windowManager: WindowManager? = null
-    private var rootView: LinearLayout? = null
-    private var layoutParams: WindowManager.LayoutParams? = null
+
+    // Окно шапки (прижато к левому верхнему углу)
+    private var headerWindowView: LinearLayout? = null
+    private var headerWindowLp: WindowManager.LayoutParams? = null
+
+    // Окно контента (по центру, с кнопкой ×)
+    private var contentWindowView: LinearLayout? = null
+    private var contentWindowLp: WindowManager.LayoutParams? = null
+    private var contentContainer: LinearLayout? = null
+
+    private var activeLabel: TextView? = null
+    private var dotView: TextView? = null
 
     private var expanded = false
     private var doorsExpanded = false
     private var isRunning = false
 
     private val handler = Handler(Looper.getMainLooper())
-
-    private var headerView: LinearLayout? = null
-    private var contentContainer: LinearLayout? = null
-    private var activeLabel: TextView? = null
-    private var dotView: TextView? = null
 
     private var fullMap: MapView? = null
     private var fullMapWrapper: View? = null
@@ -144,7 +149,7 @@ class OverlayService : Service() {
             handler.post { applyVisibility() }
         }
 
-        buildOverlayView()
+        buildHeaderWindow()
         applyVisibility()
     }
 
@@ -213,8 +218,11 @@ class OverlayService : Service() {
     override fun onDestroy() {
         OverlayBridge.onOverlayStateChanged {}
         closeFullMap()
-        try { rootView?.let { windowManager?.removeView(it) } } catch (_: Exception) {}
-        rootView = null
+        removeContentWindow()
+        try {
+            headerWindowView?.let { windowManager?.removeView(it) }
+        } catch (_: Exception) {}
+        headerWindowView = null
         OverlayBridge.setOverlayRunning(false)
         releaseWakeLock()
         super.onDestroy()
@@ -300,27 +308,17 @@ class OverlayService : Service() {
         else @Suppress("DEPRECATION")
             WindowManager.LayoutParams.TYPE_PHONE
 
-    private fun buildOverlayView() {
+    // ===================== ОКНО ШАПКИ =====================
+
+    private fun buildHeaderWindow() {
         val ctx = this
         val screenW = resources.displayMetrics.widthPixels
 
-        val root = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-
-        // ======== ШАПКА (слева, ~50% ширины) ========
         val header = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(20), 0, dp(16), 0)
-            background = roundedBg(COLOR_HEADER_BG, 8)
-            layoutParams = LinearLayout.LayoutParams(
-                (screenW / 2) - dp(24),
-                dp(HEADER_HEIGHT_DP)
-            ).also {
-                it.leftMargin = dp(12)
-                it.topMargin = dp(12)
-            }
+            background = roundedBg(COLOR_HEADER_BG, 0)
             setOnClickListener { toggleExpanded() }
         }
 
@@ -346,32 +344,12 @@ class OverlayService : Service() {
 
         header.addView(dotView)
         header.addView(activeLabel)
-        root.addView(header)
-        headerView = header
 
-        // ======== ОКОШКО (раскрытое состояние) ========
-        contentContainer = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(8), dp(20), dp(16))
-            background = roundedBg(COLOR_HEADER_BG, 12)
-            visibility = View.GONE
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).also {
-                it.leftMargin = dp(12)
-                it.rightMargin = dp(12)
-                it.topMargin = 0
-                it.bottomMargin = dp(12)
-            }
-        }
-        root.addView(contentContainer)
+        headerWindowView = header
 
-        rootView = root
-
-        layoutParams = WindowManager.LayoutParams(
+        headerWindowLp = WindowManager.LayoutParams(
             screenW / 2,
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            dp(HEADER_HEIGHT_DP),
             windowType(),
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
@@ -383,7 +361,7 @@ class OverlayService : Service() {
         }
 
         try {
-            windowManager?.addView(root, layoutParams)
+            windowManager?.addView(header, headerWindowLp)
         } catch (e: Exception) {
             Toast.makeText(
                 this,
@@ -393,26 +371,113 @@ class OverlayService : Service() {
         }
 
         applyDotColor()
+    }
+
+    // ===================== ОКНО КОНТЕНТА =====================
+
+    private fun showContentWindow() {
+        if (contentWindowView != null) {
+            rebuildContent()
+            return
+        }
+
+        val ctx = this
+        val dm = resources.displayMetrics
+        val w = (dm.widthPixels * 0.9).toInt()
+
+        val wrapper = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            background = roundedBg(COLOR_HEADER_BG, 16)
+            setPadding(dp(16), dp(12), dp(16), dp(16))
+        }
+
+        // Заголовок окошка + кнопка ×
+        val topRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        topRow.addView(TextView(ctx).apply {
+            text = "fmagnit"
+            setTextColor(COLOR_TEXT)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setTypeface(typeface, Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
+            )
+        })
+        topRow.addView(TextView(ctx).apply {
+            text = "×"
+            setTextColor(COLOR_TEXT)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
+            gravity = Gravity.CENTER
+            background = roundedBg(COLOR_ACCENT, 20)
+            setPadding(dp(12), dp(0), dp(12), dp(4))
+            setOnClickListener { toggleExpanded() }
+        })
+        wrapper.addView(topRow)
+
+        wrapper.addView(View(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(1)
+            ).also {
+                it.topMargin = dp(8)
+                it.bottomMargin = dp(8)
+            }
+            setBackgroundColor(0x22FFFFFF)
+        })
+
+        contentContainer = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        wrapper.addView(contentContainer)
+
+        contentWindowView = wrapper
+
+        contentWindowLp = WindowManager.LayoutParams(
+            w,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            windowType(),
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.CENTER
+        }
+
+        try {
+            windowManager?.addView(wrapper, contentWindowLp)
+        } catch (e: Exception) {
+            Toast.makeText(
+                this,
+                "Ошибка окна: ${e.message}",
+                Toast.LENGTH_LONG
+            ).show()
+            contentWindowView = null
+            contentWindowLp = null
+            contentContainer = null
+            return
+        }
+
         rebuildContent()
+    }
+
+    private fun removeContentWindow() {
+        try {
+            contentWindowView?.let { windowManager?.removeView(it) }
+        } catch (_: Exception) {}
+        contentWindowView = null
+        contentWindowLp = null
+        contentContainer = null
     }
 
     private fun toggleExpanded() {
         expanded = !expanded
-        rebuildContent()
-        updateWindowSize()
-    }
-
-    /**
-     * Меняет ширину окна: свёрнуто — 50% (правая половина экрана
-     * вне окна, тапы идут в Магнит), раскрыто — на всю ширину.
-     */
-    private fun updateWindowSize() {
-        val lp = layoutParams ?: return
-        val screenW = resources.displayMetrics.widthPixels
-        lp.width = if (expanded) screenW else screenW / 2
-        try {
-            windowManager?.updateViewLayout(rootView, lp)
-        } catch (_: Exception) {}
+        if (expanded) {
+            showContentWindow()
+        } else {
+            removeContentWindow()
+        }
     }
 
     private fun currentActiveNameOrPlaceholder(): String {
@@ -689,7 +754,6 @@ class OverlayService : Service() {
             .setNegativeButton("Отмена") { d, _ -> d.dismiss() }
             .create()
 
-        // Диалог должен рисоваться поверх оверлея
         dialog.window?.setType(windowType())
 
         dialog.setOnShowListener {
@@ -730,9 +794,9 @@ class OverlayService : Service() {
     private fun openFullMap(lat: Double, lon: Double) {
         closeFullMap()
 
+        // Закрываем окошко контента, шапка остаётся
         expanded = false
-        contentContainer?.visibility = View.GONE
-        updateWindowSize()
+        removeContentWindow()
 
         val ctx = this
 
@@ -808,13 +872,6 @@ class OverlayService : Service() {
         }
         container.addView(north, northLp)
 
-        try {
-            fullMap?.addMapListener(object : MapListener {
-                override fun onScroll(event: ScrollEvent?): Boolean = false
-                override fun onZoom(event: ZoomEvent?): Boolean = false
-            })
-        } catch (_: Exception) {}
-
         val orientationTicker = object : Runnable {
             override fun run() {
                 try {
@@ -879,29 +936,21 @@ class OverlayService : Service() {
         fullMap = null
     }
 
-    // ===================== РАСКРЫТЫЙ ВИД =====================
+    // ===================== КОНТЕНТ ОКНА =====================
 
     private fun rebuildContent() {
-        val ctx = this
-        val container = contentContainer ?: return
-        container.removeAllViews()
-
         isRunning = MockManager.isRunning()
         applyDotColor()
         activeLabel?.text = currentActiveNameOrPlaceholder()
 
-        if (!expanded) {
-            container.visibility = View.GONE
-            return
-        }
+        val container = contentContainer ?: return
+        container.removeAllViews()
 
-        container.visibility = View.VISIBLE
-
-        // ==== СЕКЦИЯ ЗАКАЗА ====
+        // Секция заказа
         val order = OrderTargetStore.load(this)
         if (order != null) {
             addOrderBlock(container, order.first, order.second)
-            container.addView(View(ctx).apply {
+            container.addView(View(this).apply {
                 layoutParams = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     dp(1)
@@ -913,10 +962,10 @@ class OverlayService : Service() {
             })
         }
 
-        // ==== ТОЧКИ ДЛЯ ПОДМЕНЫ ====
+        // Точки
         val points = parsePoints(currentPointsJson)
         if (points.isEmpty()) {
-            container.addView(TextView(ctx).apply {
+            container.addView(TextView(this).apply {
                 text = "Нет точек. Добавь в fmagnit."
                 setTextColor(COLOR_MUTED)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
@@ -925,21 +974,16 @@ class OverlayService : Service() {
         } else {
             points.forEach { (id, name) ->
                 val isActive = id == currentActiveId
-                val row = TextView(ctx).apply {
-                    text =
-                        (if (isActive) "● " else "○ ") + name
+                val row = TextView(this).apply {
+                    text = (if (isActive) "● " else "○ ") + name
                     setTextColor(
                         if (isActive) COLOR_ACCENT else COLOR_TEXT
                     )
-                    setTextSize(
-                        TypedValue.COMPLEX_UNIT_SP, 14f
-                    )
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
                     setPadding(dp(4), dp(10), dp(4), dp(10))
                     setOnClickListener {
                         currentActiveId = id
-                        OverlayPrefs.saveActiveId(
-                            this@OverlayService, id
-                        )
+                        OverlayPrefs.saveActiveId(this@OverlayService, id)
                         activeLabel?.text = name
                         rebuildContent()
                     }
@@ -948,8 +992,8 @@ class OverlayService : Service() {
             }
         }
 
-        // ==== СТАРТ / СТОП ====
-        val toggleBtn = TextView(ctx).apply {
+        // СТАРТ / СТОП
+        val toggleBtn = TextView(this).apply {
             text = if (isRunning) "СТОП" else "СТАРТ"
             setTextColor(COLOR_TEXT)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
@@ -964,15 +1008,12 @@ class OverlayService : Service() {
                 if (isRunning) {
                     MockManager.stop(this@OverlayService)
                     isRunning = false
-                    OverlayPrefs.saveRunning(
-                        this@OverlayService, false
-                    )
+                    OverlayPrefs.saveRunning(this@OverlayService, false)
                 } else {
                     val id = currentActiveId
                     if (id != null) {
-                        val point = parsePointsFull(
-                            currentPointsJson
-                        ).firstOrNull { it.first == id }
+                        val point = parsePointsFull(currentPointsJson)
+                            .firstOrNull { it.first == id }
                         if (point != null) {
                             val ok = MockManager.start(
                                 this@OverlayService,
@@ -995,8 +1036,8 @@ class OverlayService : Service() {
         }
         container.addView(toggleBtn)
 
-        // ==== ВОССТАНОВИТЬ GPS ====
-        val restoreBtn = TextView(ctx).apply {
+        // ВОССТАНОВИТЬ GPS
+        val restoreBtn = TextView(this).apply {
             text = "ВОССТАНОВИТЬ GPS"
             setTextColor(COLOR_MUTED)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
@@ -1007,9 +1048,7 @@ class OverlayService : Service() {
             setOnClickListener {
                 MockManager.forceReset(this@OverlayService)
                 isRunning = false
-                OverlayPrefs.saveRunning(
-                    this@OverlayService, false
-                )
+                OverlayPrefs.saveRunning(this@OverlayService, false)
                 Toast.makeText(
                     this@OverlayService,
                     "GPS восстановлен. Подожди 5-10 секунд.",
@@ -1024,8 +1063,8 @@ class OverlayService : Service() {
         }
         container.addView(restoreBtn)
 
-        // ==== ДОМОФОНЫ (выпадающая секция) ====
-        container.addView(View(ctx).apply {
+        // ДОМОФОНЫ
+        container.addView(View(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 dp(1)
@@ -1036,7 +1075,7 @@ class OverlayService : Service() {
             setBackgroundColor(0x22FFFFFF)
         })
 
-        val doorsHeader = LinearLayout(ctx).apply {
+        val doorsHeader = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(4), dp(8), dp(4), dp(8))
@@ -1045,7 +1084,7 @@ class OverlayService : Service() {
                 rebuildContent()
             }
         }
-        doorsHeader.addView(TextView(ctx).apply {
+        doorsHeader.addView(TextView(this).apply {
             text = "Домофоны"
             setTextColor(COLOR_TEXT)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
@@ -1054,14 +1093,14 @@ class OverlayService : Service() {
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
             )
         })
-        doorsHeader.addView(TextView(ctx).apply {
+        doorsHeader.addView(TextView(this).apply {
             text = if (doorsExpanded) "▲" else "▼"
             setTextColor(COLOR_MUTED)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setPadding(dp(8), 0, dp(8), 0)
         })
 
-        doorsHeader.addView(TextView(ctx).apply {
+        doorsHeader.addView(TextView(this).apply {
             text = "📍"
             setTextColor(COLOR_TEXT)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
@@ -1073,44 +1112,38 @@ class OverlayService : Service() {
         if (doorsExpanded) {
             val doors = parseDoorPoints(currentDoorCodesJson)
             if (doors.isEmpty()) {
-                container.addView(TextView(ctx).apply {
+                container.addView(TextView(this).apply {
                     text = "Пока нет кодов. Нажми 📍 чтобы добавить."
                     setTextColor(COLOR_MUTED)
-                    setTextSize(
-                        TypedValue.COMPLEX_UNIT_SP, 12f
-                    )
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                     setPadding(dp(4), dp(6), dp(4), dp(6))
                 })
             } else {
-                val listWrapper = LinearLayout(ctx).apply {
+                val listWrapper = LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
                 }
                 doors.forEach { d ->
-                    val row = LinearLayout(ctx).apply {
+                    val row = LinearLayout(this).apply {
                         orientation = LinearLayout.VERTICAL
                         setPadding(dp(4), dp(8), dp(4), dp(8))
                     }
-                    row.addView(TextView(ctx).apply {
+                    row.addView(TextView(this).apply {
                         text = d.code
                         setTextColor(COLOR_TEXT)
-                        setTextSize(
-                            TypedValue.COMPLEX_UNIT_SP, 15f
-                        )
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
                         setTypeface(typeface, Typeface.BOLD)
                     })
                     if (d.address.isNotEmpty()) {
-                        row.addView(TextView(ctx).apply {
+                        row.addView(TextView(this).apply {
                             text = d.address
                             setTextColor(COLOR_MUTED)
-                            setTextSize(
-                                TypedValue.COMPLEX_UNIT_SP, 12f
-                            )
+                            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                             setPadding(0, dp(2), 0, 0)
                         })
                     }
                     listWrapper.addView(row)
                 }
-                val scroll = ScrollView(ctx)
+                val scroll = ScrollView(this)
                 scroll.addView(listWrapper)
                 container.addView(
                     scroll,
@@ -1128,9 +1161,7 @@ class OverlayService : Service() {
         lat: Double,
         lon: Double
     ) {
-        val ctx = this
-
-        container.addView(TextView(ctx).apply {
+        container.addView(TextView(this).apply {
             text = "Заказ клиента"
             setTextColor(COLOR_ACCENT)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
@@ -1138,7 +1169,7 @@ class OverlayService : Service() {
             setPadding(0, dp(4), 0, dp(4))
         })
 
-        container.addView(TextView(ctx).apply {
+        container.addView(TextView(this).apply {
             text = String.format(Locale.US, "%.6f, %.6f", lat, lon)
             setTextColor(COLOR_TEXT)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
@@ -1148,7 +1179,7 @@ class OverlayService : Service() {
         val nearby = findNearbyDoorCodes(lat, lon)
         if (nearby.isNotEmpty()) {
             val codesText = nearby.joinToString(", ") { it.code }
-            container.addView(TextView(ctx).apply {
+            container.addView(TextView(this).apply {
                 text = "Возможный код домофона: $codesText"
                 setTextColor(COLOR_DOOR_OK)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
@@ -1156,7 +1187,7 @@ class OverlayService : Service() {
                 setPadding(0, 0, 0, dp(10))
             })
         } else if (hasNearbyPointWithoutCode(lat, lon)) {
-            container.addView(TextView(ctx).apply {
+            container.addView(TextView(this).apply {
                 text = "Возможный код домофона: кода пока нет"
                 setTextColor(COLOR_MUTED)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
@@ -1164,7 +1195,7 @@ class OverlayService : Service() {
             })
         }
 
-        container.addView(TextView(ctx).apply {
+        container.addView(TextView(this).apply {
             text = "ОТКРЫТЬ КАРТУ"
             setTextColor(COLOR_TEXT)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
@@ -1179,12 +1210,12 @@ class OverlayService : Service() {
             ).also { it.bottomMargin = dp(8) }
         })
 
-        val row = LinearLayout(ctx).apply {
+        val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
 
-        val goBtn = TextView(ctx).apply {
+        val goBtn = TextView(this).apply {
             text = "ПЕРЕЙТИ"
             setTextColor(COLOR_TEXT)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
@@ -1201,13 +1232,11 @@ class OverlayService : Service() {
                 rebuildContent()
             }
             layoutParams = LinearLayout.LayoutParams(
-                0,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                1f
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
             ).also { it.rightMargin = dp(6) }
         }
 
-        val closeBtn = TextView(ctx).apply {
+        val closeBtn = TextView(this).apply {
             text = "ЗАКРЫТЬ"
             setTextColor(COLOR_TEXT)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
@@ -1218,13 +1247,10 @@ class OverlayService : Service() {
             setOnClickListener {
                 OrderTargetStore.clear(this@OverlayService)
                 expanded = false
-                rebuildContent()
-                updateWindowSize()
+                removeContentWindow()
             }
             layoutParams = LinearLayout.LayoutParams(
-                0,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                1f
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
             ).also { it.leftMargin = dp(6) }
         }
 
@@ -1310,17 +1336,18 @@ class OverlayService : Service() {
     }
 
     private fun applyVisibility() {
-        val v = rootView ?: return
+        val h = headerWindowView ?: return
         val usageOk = ForegroundDetector.hasUsageAccess(this)
-        if (!usageOk) {
-            v.visibility = View.VISIBLE
-            return
-        }
-        v.visibility =
+        val vis = if (!usageOk) {
+            View.VISIBLE
+        } else {
             if (OverlayBridge.isTargetAppForeground)
                 View.VISIBLE
             else
                 View.GONE
+        }
+        h.visibility = vis
+        contentWindowView?.visibility = vis
     }
 }
 
