@@ -17,11 +17,10 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
-import android.os.SystemClock
 import android.text.InputType
+import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
-import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -70,7 +69,6 @@ class OverlayService : Service() {
         private const val COLOR_PLATE_TEXT = 0xFF1E1E1E.toInt()
 
         private const val HEADER_HEIGHT_DP = 56
-        private const val TITLE_FONT_SP = 20f
         private const val STATUS_FONT_SP = 12f
         private const val DOT_SIZE_SP = 14f
 
@@ -116,10 +114,7 @@ class OverlayService : Service() {
 
     private var contentContainer: LinearLayout? = null
     private var activeLabel: TextView? = null
-    private var arrowView: TextView? = null
     private var dotView: TextView? = null
-
-    private var orderContainer: LinearLayout? = null
 
     private var fullMap: MapView? = null
     private var fullMapWrapper: View? = null
@@ -300,23 +295,39 @@ class OverlayService : Service() {
         return d
     }
 
+    /** Скруглены только правые углы (верхний и нижний). */
+    private fun roundedBgRightOnly(color: Int, radiusDp: Int): GradientDrawable {
+        val d = GradientDrawable()
+        d.shape = GradientDrawable.RECTANGLE
+        val r = dp(radiusDp).toFloat()
+        // порядок: TL-x TL-y TR-x TR-y BR-x BR-y BL-x BL-y
+        d.cornerRadii = floatArrayOf(
+            0f, 0f, r, r,
+            r, r, 0f, 0f
+        )
+        d.setColor(color)
+        return d
+    }
+
     private fun buildOverlayView() {
         val ctx = this
+        val screenW = resources.displayMetrics.widthPixels
 
         val root = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            background = roundedBg(COLOR_HEADER_BG, 0)
         }
 
+        // ======== ШАПКА (левая половина) ========
         val header = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(20), 0, dp(16), 0)
             background = roundedBg(COLOR_HEADER_BG, 0)
             layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
+                screenW / 2,
                 dp(HEADER_HEIGHT_DP)
             )
+            setOnClickListener { toggleExpanded() }
         }
 
         dotView = TextView(ctx).apply {
@@ -326,11 +337,12 @@ class OverlayService : Service() {
             setPadding(0, 0, dp(12), 0)
         }
 
-        val title = TextView(ctx).apply {
-            text = "fmagnit"
-            setTextColor(COLOR_TEXT)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, TITLE_FONT_SP)
-            setTypeface(typeface, Typeface.BOLD)
+        activeLabel = TextView(ctx).apply {
+            text = currentActiveNameOrPlaceholder()
+            setTextColor(COLOR_MUTED)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, STATUS_FONT_SP)
+            setSingleLine(true)
+            ellipsize = TextUtils.TruncateAt.END
             layoutParams = LinearLayout.LayoutParams(
                 0,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -338,43 +350,26 @@ class OverlayService : Service() {
             )
         }
 
-        activeLabel = TextView(ctx).apply {
-            text = currentActiveNameOrPlaceholder()
-            setTextColor(COLOR_MUTED)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, STATUS_FONT_SP)
-            setPadding(0, 0, dp(12), 0)
-        }
-
-        arrowView = TextView(ctx).apply {
-            text = "▼"
-            setTextColor(COLOR_TEXT)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            setPadding(dp(8), dp(4), dp(8), dp(4))
-        }
-
         header.addView(dotView)
-        header.addView(title)
         header.addView(activeLabel)
-        header.addView(arrowView)
         root.addView(header)
 
-        orderContainer = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(4), dp(20), dp(16))
-            background = roundedBg(COLOR_HEADER_BG, 0)
-            visibility = View.GONE
-        }
-        root.addView(orderContainer)
-
+        // ======== ОКОШКО (раскрытое состояние) ========
         contentContainer = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(4), dp(20), dp(16))
-            background = roundedBg(COLOR_HEADER_BG, 0)
+            background = roundedBgRightOnly(COLOR_HEADER_BG, 12)
             visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).also {
+                it.topMargin = 0
+                it.rightMargin = dp(12)
+                it.bottomMargin = dp(12)
+            }
         }
         root.addView(contentContainer)
-
-        attachHeaderGestures(header)
 
         rootView = root
 
@@ -387,12 +382,13 @@ class OverlayService : Service() {
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             type,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.OPAQUE
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            y = 0
             x = 0
+            y = 0
         }
 
         try {
@@ -407,58 +403,6 @@ class OverlayService : Service() {
 
         applyDotColor()
         rebuildContent()
-    }
-
-    private fun attachHeaderGestures(view: View) {
-        var downTime = 0L
-        var initialY = 0
-        var initialTouchY = 0f
-        var moved = false
-        var handled = false
-
-        view.setOnTouchListener { _, event ->
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    downTime = SystemClock.elapsedRealtime()
-                    initialY = layoutParams?.y ?: 0
-                    initialTouchY = event.rawY
-                    moved = false
-                    handled = false
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    if (handled) return@setOnTouchListener true
-                    val dy = event.rawY - initialTouchY
-                    if (Math.abs(dy) > 10) {
-                        moved = true
-                        val newY = (initialY + dy.toInt()).coerceAtLeast(0)
-                        layoutParams?.y = newY
-                        try {
-                            windowManager?.updateViewLayout(
-                                rootView,
-                                layoutParams
-                            )
-                        } catch (_: Exception) {}
-                    }
-                    true
-                }
-                MotionEvent.ACTION_UP -> {
-                    if (handled) return@setOnTouchListener true
-                    val duration = SystemClock.elapsedRealtime() - downTime
-                    val isTap = !moved && duration < 300
-                    if (isTap) {
-                        toggleExpanded()
-                        handled = true
-                    }
-                    true
-                }
-                MotionEvent.ACTION_CANCEL -> {
-                    handled = true
-                    true
-                }
-                else -> false
-            }
-        }
     }
 
     private fun toggleExpanded() {
@@ -494,9 +438,6 @@ class OverlayService : Service() {
         return map
     }
 
-    /**
-     * Маркер заказа — стандартный красный пин osmdroid.
-     */
     private fun addOrderMarker(map: MapView, lat: Double, lon: Double) {
         try {
             val marker = Marker(map)
@@ -507,11 +448,6 @@ class OverlayService : Service() {
         } catch (_: Exception) {}
     }
 
-    /**
-     * Маркер Waypoint — красный квадрат с буквой «М» и белой
-     * плашкой с названием точки под ним.
-     * Тап по маркеру — ничего (по требованию).
-     */
     private fun addWaypointMarker(
         map: MapView,
         lat: Double,
@@ -523,12 +459,8 @@ class OverlayService : Service() {
             marker.position = GeoPoint(lat, lon)
             marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
             marker.title = null
-            marker.setOnMarkerClickListener { _, _ ->
-                // По требованию — ничего не делаем, только гасим
-                true
-            }
+            marker.setOnMarkerClickListener { _, _ -> true }
 
-            // Иконка: красный квадрат с буквой «М»
             val ctx = this
             val sizePx = dp(28)
             val square = TextView(ctx).apply {
@@ -548,7 +480,6 @@ class OverlayService : Service() {
 
             map.overlays.add(marker)
 
-            // Плашка с названием — отдельный маркер поверх, чуть выше
             if (name.isNotEmpty()) {
                 val label = Marker(map)
                 label.position = GeoPoint(lat, lon)
@@ -575,10 +506,6 @@ class OverlayService : Service() {
         } catch (_: Exception) {}
     }
 
-    /**
-     * Рендерит View в Bitmap для иконки маркера.
-     * Если exactWidth=false, ширина будет по wrap_content (для плашки).
-     */
     private fun viewToBitmap(
         view: View,
         widthPx: Int,
@@ -651,10 +578,6 @@ class OverlayService : Service() {
         return 2 * r * asin(sqrt(a))
     }
 
-    /**
-     * Возвращает ВСЕ коды в радиусе 50 м, отсортированные
-     * по расстоянию (ближайший первым).
-     */
     private fun findNearbyDoorCodes(
         orderLat: Double,
         orderLon: Double
@@ -673,15 +596,10 @@ class OverlayService : Service() {
         return withDist.sortedBy { it.distance }
     }
 
-    /**
-     * Есть ли в радиусе 50 м хоть одна точка без кода?
-     * Нужно для сообщения «кода пока нет».
-     */
     private fun hasNearbyPointWithoutCode(
         orderLat: Double,
         orderLon: Double
     ): Boolean {
-        // Идём по всем точкам (с кодом и без), ищем в радиусе
         return try {
             val arr = JSONArray(currentDoorCodesJson)
             for (i in 0 until arr.length()) {
@@ -708,132 +626,8 @@ class OverlayService : Service() {
         } catch (_: Exception) {}
     }
 
-    // ===================== БЛОК ЗАКАЗА =====================
+    // ===================== GPS-ДИАЛОГ =====================
 
-    private fun rebuildOrderBlock() {
-        val ctx = this
-        val c = orderContainer ?: return
-        c.removeAllViews()
-
-        val order = OrderTargetStore.load(this)
-        if (order == null) {
-            c.visibility = View.GONE
-            return
-        }
-        c.visibility = View.VISIBLE
-
-        val (lat, lon) = order
-
-        c.addView(TextView(ctx).apply {
-            text = "Заказ клиента"
-            setTextColor(COLOR_ACCENT)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            setTypeface(typeface, Typeface.BOLD)
-            setPadding(0, dp(8), 0, dp(4))
-        })
-
-        c.addView(TextView(ctx).apply {
-            text = String.format(Locale.US, "%.6f, %.6f", lat, lon)
-            setTextColor(COLOR_TEXT)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            setPadding(0, 0, 0, dp(6))
-        })
-
-        // ==== КОДЫ ДОМОФОНОВ РЯДОМ (50 м, через запятую) ====
-        val nearby = findNearbyDoorCodes(lat, lon)
-        if (nearby.isNotEmpty()) {
-            val codesText = nearby.joinToString(", ") { it.code }
-            c.addView(TextView(ctx).apply {
-                text = "Возможный код домофона: $codesText"
-                setTextColor(COLOR_DOOR_OK)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setTypeface(typeface, Typeface.BOLD)
-                setPadding(0, 0, 0, dp(10))
-            })
-        } else if (hasNearbyPointWithoutCode(lat, lon)) {
-            c.addView(TextView(ctx).apply {
-                text = "Возможный код домофона: кода пока нет"
-                setTextColor(COLOR_MUTED)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                setPadding(0, 0, 0, dp(10))
-            })
-        }
-
-        c.addView(TextView(ctx).apply {
-            text = "ОТКРЫТЬ КАРТУ"
-            setTextColor(COLOR_TEXT)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTypeface(typeface, Typeface.BOLD)
-            gravity = Gravity.CENTER
-            setPadding(dp(16), dp(12), dp(16), dp(12))
-            background = roundedBg(COLOR_INACTIVE, 12)
-            setOnClickListener { openFullMap(lat, lon) }
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).also { it.bottomMargin = dp(8) }
-        })
-
-        val row = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-
-        val goBtn = TextView(ctx).apply {
-            text = "ПЕРЕЙТИ"
-            setTextColor(COLOR_TEXT)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTypeface(typeface, Typeface.BOLD)
-            gravity = Gravity.CENTER
-            setPadding(dp(14), dp(12), dp(14), dp(12))
-            background = roundedBg(COLOR_ACCENT, 12)
-            setOnClickListener {
-                val ok = MockManager.start(
-                    this@OverlayService, lat, lon, 5.0, 0.0, 1000L
-                )
-                isRunning = ok
-                OverlayPrefs.saveRunning(this@OverlayService, ok)
-                rebuildContent()
-            }
-            layoutParams = LinearLayout.LayoutParams(
-                0,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                1f
-            ).also { it.rightMargin = dp(6) }
-        }
-
-        val closeBtn = TextView(ctx).apply {
-            text = "ЗАКРЫТЬ"
-            setTextColor(COLOR_TEXT)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTypeface(typeface, Typeface.BOLD)
-            gravity = Gravity.CENTER
-            setPadding(dp(14), dp(12), dp(14), dp(12))
-            background = roundedBg(COLOR_INACTIVE, 12)
-            setOnClickListener {
-                OrderTargetStore.clear(this@OverlayService)
-                expanded = false
-                rebuildContent()
-            }
-            layoutParams = LinearLayout.LayoutParams(
-                0,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                1f
-            ).also { it.leftMargin = dp(6) }
-        }
-
-        row.addView(goBtn)
-        row.addView(closeBtn)
-        c.addView(row)
-    }
-
-    // ===================== GPS-КНОПКА + ДИАЛОГ =====================
-
-    /**
-     * Берёт текущие координаты (mock, если запущен, иначе реальные)
-     * и открывает диалог «Адрес» + «Код домофона».
-     * Сохраняет в door_codes.json через DoorCodeNativeStore.
-     */
     private fun openAddDoorCodeDialog() {
         val last: android.location.Location? = try {
             MockManager.getBestRealLocation(this)
@@ -904,7 +698,6 @@ class OverlayService : Service() {
                     )
                     if (newId != null) {
                         reloadDoorCodesFromFile()
-                        // Сообщаем Flutter, что коды изменились
                         val bcast = Intent(ACTION_DOOR_CODES_CHANGED)
                         bcast.setPackage(packageName)
                         try { sendBroadcast(bcast) } catch (_: Exception) {}
@@ -930,31 +723,25 @@ class OverlayService : Service() {
         closeFullMap()
 
         expanded = false
-        orderContainer?.visibility = View.GONE
         contentContainer?.visibility = View.GONE
-        arrowView?.text = "▼"
 
         val ctx = this
 
         fullMap = createMapView()
         fullMap?.let { map ->
-            // Маркер заказа
             addOrderMarker(map, lat, lon)
 
-            // Все Waypoint как красные квадраты с «М» и плашкой
             val pts = parsePointsFullWithName(currentPointsJson)
             pts.forEach { (_, name, pLat, pLon, _) ->
                 addWaypointMarker(map, pLat, pLon, name)
             }
 
-            // Вращение двумя пальцами
             try {
                 val rotation = RotationGestureOverlay(map)
                 rotation.isEnabled = true
                 map.overlays.add(rotation)
             } catch (_: Exception) {}
 
-            // Центр и зум по заказу
             map.controller.setCenter(GeoPoint(lat, lon))
             map.controller.setZoom(17.0)
             map.invalidate()
@@ -971,7 +758,6 @@ class OverlayService : Service() {
             )
         }
 
-        // Кнопка закрытия
         val closeBtn = TextView(ctx).apply {
             text = "×"
             setTextColor(COLOR_TEXT)
@@ -989,7 +775,6 @@ class OverlayService : Service() {
         }
         container.addView(closeBtn, closeLp)
 
-        // Кнопка «N» — сброс на север (появляется при повороте)
         val north = TextView(ctx).apply {
             text = "N"
             setTextColor(COLOR_TEXT)
@@ -1014,7 +799,6 @@ class OverlayService : Service() {
         }
         container.addView(north, northLp)
 
-        // Слушаем изменение поворота карты, чтобы показать/скрыть «N»
         try {
             fullMap?.addMapListener(object : MapListener {
                 override fun onScroll(event: ScrollEvent?): Boolean = false
@@ -1022,7 +806,6 @@ class OverlayService : Service() {
             })
         } catch (_: Exception) {}
 
-        // Периодически проверяем поворот — простой и надёжный путь
         val orientationTicker = object : Runnable {
             override fun run() {
                 try {
@@ -1099,246 +882,355 @@ class OverlayService : Service() {
         val container = contentContainer ?: return
         container.removeAllViews()
 
-        val hasOrder = OrderTargetStore.load(this) != null
-        rebuildOrderBlock()
-
         isRunning = MockManager.isRunning()
         applyDotColor()
+        activeLabel?.text = currentActiveNameOrPlaceholder()
 
-        if (expanded) {
-            orderContainer?.visibility =
-                if (hasOrder) View.VISIBLE else View.GONE
-            container.visibility = View.VISIBLE
-            arrowView?.text = "▼"
-            activeLabel?.text = currentActiveNameOrPlaceholder()
+        // Свёрнуто — только шапка
+        if (!expanded) {
+            container.visibility = View.GONE
+            return
+        }
 
+        container.visibility = View.VISIBLE
+
+        // ==== СЕКЦИЯ ЗАКАЗА ====
+        val order = OrderTargetStore.load(this)
+        if (order != null) {
+            addOrderBlock(container, order.first, order.second)
             container.addView(View(ctx).apply {
                 layoutParams = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     dp(1)
                 ).also {
-                    it.topMargin = dp(8)
+                    it.topMargin = dp(4)
                     it.bottomMargin = dp(8)
                 }
                 setBackgroundColor(0x22FFFFFF)
             })
+        }
 
-            // ==== ТОЧКИ ДЛЯ ПОДМЕНЫ ====
-            val points = parsePoints(currentPointsJson)
-            if (points.isEmpty()) {
-                container.addView(TextView(ctx).apply {
-                    text = "Нет точек. Добавь в fmagnit."
-                    setTextColor(COLOR_MUTED)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                    setPadding(0, dp(6), 0, dp(6))
-                })
-            } else {
-                points.forEach { (id, name) ->
-                    val isActive = id == currentActiveId
-                    val row = TextView(ctx).apply {
-                        text =
-                            (if (isActive) "● " else "○ ") + name
-                        setTextColor(
-                            if (isActive) COLOR_ACCENT else COLOR_TEXT
-                        )
-                        setTextSize(
-                            TypedValue.COMPLEX_UNIT_SP, 14f
-                        )
-                        setPadding(dp(4), dp(10), dp(4), dp(10))
-                        setOnClickListener {
-                            currentActiveId = id
-                            OverlayPrefs.saveActiveId(
-                                this@OverlayService, id
-                            )
-                            activeLabel?.text = name
-                            rebuildContent()
-                        }
-                    }
-                    container.addView(row)
-                }
-            }
-
-            val toggleBtn = TextView(ctx).apply {
-                text = if (isRunning) "СТОП" else "СТАРТ"
-                setTextColor(COLOR_TEXT)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setTypeface(typeface, Typeface.BOLD)
-                gravity = Gravity.CENTER
-                setPadding(dp(16), dp(12), dp(16), dp(12))
-                background = roundedBg(
-                    if (isRunning) COLOR_INACTIVE else COLOR_ACCENT,
-                    12
-                )
-                setOnClickListener {
-                    if (isRunning) {
-                        MockManager.stop(this@OverlayService)
-                        isRunning = false
-                        OverlayPrefs.saveRunning(
-                            this@OverlayService, false
-                        )
-                    } else {
-                        val id = currentActiveId
-                        if (id != null) {
-                            val point = parsePointsFull(
-                                currentPointsJson
-                            ).firstOrNull { it.first == id }
-                            if (point != null) {
-                                val ok = MockManager.start(
-                                    this@OverlayService,
-                                    point.second, point.third,
-                                    point.fourth, 0.0, 1000L
-                                )
-                                isRunning = ok
-                                OverlayPrefs.saveRunning(
-                                    this@OverlayService, ok
-                                )
-                            }
-                        }
-                    }
-                    rebuildContent()
-                }
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                ).also { it.topMargin = dp(10) }
-            }
-            container.addView(toggleBtn)
-
-            // ==== ВОССТАНОВИТЬ GPS ====
-            val restoreBtn = TextView(ctx).apply {
-                text = "ВОССТАНОВИТЬ GPS"
+        // ==== ТОЧКИ ДЛЯ ПОДМЕНЫ ====
+        val points = parsePoints(currentPointsJson)
+        if (points.isEmpty()) {
+            container.addView(TextView(ctx).apply {
+                text = "Нет точек. Добавь в fmagnit."
                 setTextColor(COLOR_MUTED)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                setTypeface(typeface, Typeface.BOLD)
-                gravity = Gravity.CENTER
-                setPadding(dp(16), dp(10), dp(16), dp(10))
-                background = roundedBg(COLOR_INACTIVE, 12)
-                setOnClickListener {
-                    MockManager.forceReset(this@OverlayService)
+                setPadding(0, dp(6), 0, dp(6))
+            })
+        } else {
+            points.forEach { (id, name) ->
+                val isActive = id == currentActiveId
+                val row = TextView(ctx).apply {
+                    text =
+                        (if (isActive) "● " else "○ ") + name
+                    setTextColor(
+                        if (isActive) COLOR_ACCENT else COLOR_TEXT
+                    )
+                    setTextSize(
+                        TypedValue.COMPLEX_UNIT_SP, 14f
+                    )
+                    setPadding(dp(4), dp(10), dp(4), dp(10))
+                    setOnClickListener {
+                        currentActiveId = id
+                        OverlayPrefs.saveActiveId(
+                            this@OverlayService, id
+                        )
+                        activeLabel?.text = name
+                        rebuildContent()
+                    }
+                }
+                container.addView(row)
+            }
+        }
+
+        // ==== СТАРТ / СТОП ====
+        val toggleBtn = TextView(ctx).apply {
+            text = if (isRunning) "СТОП" else "СТАРТ"
+            setTextColor(COLOR_TEXT)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            background = roundedBg(
+                if (isRunning) COLOR_INACTIVE else COLOR_ACCENT,
+                12
+            )
+            setOnClickListener {
+                if (isRunning) {
+                    MockManager.stop(this@OverlayService)
                     isRunning = false
                     OverlayPrefs.saveRunning(
                         this@OverlayService, false
                     )
-                    Toast.makeText(
-                        this@OverlayService,
-                        "GPS восстановлен. Подожди 5-10 секунд.",
-                        Toast.LENGTH_LONG
-                    ).show()
-                    rebuildContent()
+                } else {
+                    val id = currentActiveId
+                    if (id != null) {
+                        val point = parsePointsFull(
+                            currentPointsJson
+                        ).firstOrNull { it.first == id }
+                        if (point != null) {
+                            val ok = MockManager.start(
+                                this@OverlayService,
+                                point.second, point.third,
+                                point.fourth, 0.0, 1000L
+                            )
+                            isRunning = ok
+                            OverlayPrefs.saveRunning(
+                                this@OverlayService, ok
+                            )
+                        }
+                    }
                 }
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                ).also { it.topMargin = dp(8) }
+                rebuildContent()
             }
-            container.addView(restoreBtn)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).also { it.topMargin = dp(10) }
+        }
+        container.addView(toggleBtn)
 
-            // ==== ДОМОФОНЫ (выпадающая секция) ====
-            container.addView(View(ctx).apply {
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    dp(1)
-                ).also {
-                    it.topMargin = dp(12)
-                    it.bottomMargin = dp(4)
-                }
-                setBackgroundColor(0x22FFFFFF)
-            })
-
-            val doorsHeader = LinearLayout(ctx).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(4), dp(8), dp(4), dp(8))
-                setOnClickListener {
-                    doorsExpanded = !doorsExpanded
-                    rebuildContent()
-                }
+        // ==== ВОССТАНОВИТЬ GPS ====
+        val restoreBtn = TextView(ctx).apply {
+            text = "ВОССТАНОВИТЬ GPS"
+            setTextColor(COLOR_MUTED)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setPadding(dp(16), dp(10), dp(16), dp(10))
+            background = roundedBg(COLOR_INACTIVE, 12)
+            setOnClickListener {
+                MockManager.forceReset(this@OverlayService)
+                isRunning = false
+                OverlayPrefs.saveRunning(
+                    this@OverlayService, false
+                )
+                Toast.makeText(
+                    this@OverlayService,
+                    "GPS восстановлен. Подожди 5-10 секунд.",
+                    Toast.LENGTH_LONG
+                ).show()
+                rebuildContent()
             }
-            doorsHeader.addView(TextView(ctx).apply {
-                text = "Домофоны"
-                setTextColor(COLOR_TEXT)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).also { it.topMargin = dp(8) }
+        }
+        container.addView(restoreBtn)
+
+        // ==== ДОМОФОНЫ (выпадающая секция) ====
+        container.addView(View(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(1)
+            ).also {
+                it.topMargin = dp(12)
+                it.bottomMargin = dp(4)
+            }
+            setBackgroundColor(0x22FFFFFF)
+        })
+
+        val doorsHeader = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(4), dp(8), dp(4), dp(8))
+            setOnClickListener {
+                doorsExpanded = !doorsExpanded
+                rebuildContent()
+            }
+        }
+        doorsHeader.addView(TextView(ctx).apply {
+            text = "Домофоны"
+            setTextColor(COLOR_TEXT)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTypeface(typeface, Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
+            )
+        })
+        doorsHeader.addView(TextView(ctx).apply {
+            text = if (doorsExpanded) "▲" else "▼"
+            setTextColor(COLOR_MUTED)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setPadding(dp(8), 0, dp(8), 0)
+        })
+
+        // GPS-кнопка добавления нового кода
+        doorsHeader.addView(TextView(ctx).apply {
+            text = "📍"
+            setTextColor(COLOR_TEXT)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+            setPadding(dp(12), dp(4), dp(8), dp(4))
+            setOnClickListener { openAddDoorCodeDialog() }
+        })
+        container.addView(doorsHeader)
+
+        if (doorsExpanded) {
+            val doors = parseDoorPoints(currentDoorCodesJson)
+            if (doors.isEmpty()) {
+                container.addView(TextView(ctx).apply {
+                    text = "Пока нет кодов. Нажми 📍 чтобы добавить."
+                    setTextColor(COLOR_MUTED)
+                    setTextSize(
+                        TypedValue.COMPLEX_UNIT_SP, 12f
+                    )
+                    setPadding(dp(4), dp(6), dp(4), dp(6))
+                })
+            } else {
+                val listWrapper = LinearLayout(ctx).apply {
+                    orientation = LinearLayout.VERTICAL
+                }
+                doors.forEach { d ->
+                    val row = LinearLayout(ctx).apply {
+                        orientation = LinearLayout.VERTICAL
+                        setPadding(dp(4), dp(8), dp(4), dp(8))
+                    }
+                    row.addView(TextView(ctx).apply {
+                        text = d.code
+                        setTextColor(COLOR_TEXT)
+                        setTextSize(
+                            TypedValue.COMPLEX_UNIT_SP, 15f
+                        )
+                        setTypeface(typeface, Typeface.BOLD)
+                    })
+                    if (d.address.isNotEmpty()) {
+                        row.addView(TextView(ctx).apply {
+                            text = d.address
+                            setTextColor(COLOR_MUTED)
+                            setTextSize(
+                                TypedValue.COMPLEX_UNIT_SP, 12f
+                            )
+                            setPadding(0, dp(2), 0, 0)
+                        })
+                    }
+                    listWrapper.addView(row)
+                }
+                val scroll = ScrollView(ctx)
+                scroll.addView(listWrapper)
+                container.addView(
+                    scroll,
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        dp(180)
+                    )
+                )
+            }
+        }
+    }
+
+    /**
+     * Секция «Заказ клиента» — координаты, коды рядом, кнопки.
+     */
+    private fun addOrderBlock(
+        container: LinearLayout,
+        lat: Double,
+        lon: Double
+    ) {
+        val ctx = this
+
+        container.addView(TextView(ctx).apply {
+            text = "Заказ клиента"
+            setTextColor(COLOR_ACCENT)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(0, dp(8), 0, dp(4))
+        })
+
+        container.addView(TextView(ctx).apply {
+            text = String.format(Locale.US, "%.6f, %.6f", lat, lon)
+            setTextColor(COLOR_TEXT)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setPadding(0, 0, 0, dp(6))
+        })
+
+        val nearby = findNearbyDoorCodes(lat, lon)
+        if (nearby.isNotEmpty()) {
+            val codesText = nearby.joinToString(", ") { it.code }
+            container.addView(TextView(ctx).apply {
+                text = "Возможный код домофона: $codesText"
+                setTextColor(COLOR_DOOR_OK)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
                 setTypeface(typeface, Typeface.BOLD)
-                layoutParams = LinearLayout.LayoutParams(
-                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
-                )
+                setPadding(0, 0, 0, dp(10))
             })
-            doorsHeader.addView(TextView(ctx).apply {
-                text = if (doorsExpanded) "▲" else "▼"
+        } else if (hasNearbyPointWithoutCode(lat, lon)) {
+            container.addView(TextView(ctx).apply {
+                text = "Возможный код домофона: кода пока нет"
                 setTextColor(COLOR_MUTED)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setPadding(dp(8), 0, dp(8), 0)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                setPadding(0, 0, 0, dp(10))
             })
-
-            // GPS-кнопка добавления нового кода
-            doorsHeader.addView(TextView(ctx).apply {
-                text = "📍"
-                setTextColor(COLOR_TEXT)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
-                setPadding(dp(12), dp(4), dp(8), dp(4))
-                setOnClickListener { openAddDoorCodeDialog() }
-            })
-            container.addView(doorsHeader)
-
-            if (doorsExpanded) {
-                val doors = parseDoorPoints(currentDoorCodesJson)
-                if (doors.isEmpty()) {
-                    container.addView(TextView(ctx).apply {
-                        text = "Пока нет кодов. Нажми 📍 чтобы добавить."
-                        setTextColor(COLOR_MUTED)
-                        setTextSize(
-                            TypedValue.COMPLEX_UNIT_SP, 12f
-                        )
-                        setPadding(dp(4), dp(6), dp(4), dp(6))
-                    })
-                } else {
-                    val listWrapper = LinearLayout(ctx).apply {
-                        orientation = LinearLayout.VERTICAL
-                    }
-                    doors.forEach { d ->
-                        val row = LinearLayout(ctx).apply {
-                            orientation = LinearLayout.VERTICAL
-                            setPadding(dp(4), dp(8), dp(4), dp(8))
-                        }
-                        row.addView(TextView(ctx).apply {
-                            text = d.code
-                            setTextColor(COLOR_TEXT)
-                            setTextSize(
-                                TypedValue.COMPLEX_UNIT_SP, 15f
-                            )
-                            setTypeface(typeface, Typeface.BOLD)
-                        })
-                        if (d.address.isNotEmpty()) {
-                            row.addView(TextView(ctx).apply {
-                                text = d.address
-                                setTextColor(COLOR_MUTED)
-                                setTextSize(
-                                    TypedValue.COMPLEX_UNIT_SP, 12f
-                                )
-                                setPadding(0, dp(2), 0, 0)
-                            })
-                        }
-                        listWrapper.addView(row)
-                    }
-                    val scroll = ScrollView(ctx)
-                    scroll.addView(listWrapper)
-                    container.addView(
-                        scroll,
-                        LinearLayout.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            dp(180)
-                        )
-                    )
-                }
-            }
-
-        } else {
-            orderContainer?.visibility =
-                if (hasOrder) View.VISIBLE else View.GONE
-            container.visibility = View.GONE
-            arrowView?.text = "▼"
-            activeLabel?.text = currentActiveNameOrPlaceholder()
         }
+
+        container.addView(TextView(ctx).apply {
+            text = "ОТКРЫТЬ КАРТУ"
+            setTextColor(COLOR_TEXT)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            background = roundedBg(COLOR_INACTIVE, 12)
+            setOnClickListener { openFullMap(lat, lon) }
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).also { it.bottomMargin = dp(8) }
+        })
+
+        val row = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        val goBtn = TextView(ctx).apply {
+            text = "ПЕРЕЙТИ"
+            setTextColor(COLOR_TEXT)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            background = roundedBg(COLOR_ACCENT, 12)
+            setOnClickListener {
+                val ok = MockManager.start(
+                    this@OverlayService, lat, lon, 5.0, 0.0, 1000L
+                )
+                isRunning = ok
+                OverlayPrefs.saveRunning(this@OverlayService, ok)
+                rebuildContent()
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1f
+            ).also { it.rightMargin = dp(6) }
+        }
+
+        val closeBtn = TextView(ctx).apply {
+            text = "ЗАКРЫТЬ"
+            setTextColor(COLOR_TEXT)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            background = roundedBg(COLOR_INACTIVE, 12)
+            setOnClickListener {
+                OrderTargetStore.clear(this@OverlayService)
+                expanded = false
+                rebuildContent()
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1f
+            ).also { it.leftMargin = dp(6) }
+        }
+
+        row.addView(goBtn)
+        row.addView(closeBtn)
+        container.addView(row)
     }
 
     // ===================== ПАРСЕРЫ ТОЧЕК =====================
@@ -1362,7 +1254,6 @@ class OverlayService : Service() {
         }
     }
 
-    /** id, name, lat, lon, accuracy — для маркеров на карте */
     private fun parsePointsFullWithName(
         json: String
     ): List<WaypointTuple> {
