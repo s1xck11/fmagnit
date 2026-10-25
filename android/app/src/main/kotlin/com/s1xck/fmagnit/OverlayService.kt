@@ -17,8 +17,10 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.text.Editable
 import android.text.InputType
 import android.text.TextUtils
+import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -33,10 +35,8 @@ import android.widget.Toast
 import org.json.JSONArray
 import org.json.JSONObject
 import org.osmdroid.config.Configuration
-import org.osmdroid.events.MapListener
-import org.osmdroid.events.ScrollEvent
-import org.osmdroid.events.ZoomEvent
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
@@ -66,6 +66,8 @@ class OverlayService : Service() {
         private const val COLOR_MARKER_BG = 0xFFE30613.toInt()
         private const val COLOR_PLATE_BG = 0xFFFFFFFF.toInt()
         private const val COLOR_PLATE_TEXT = 0xFF1E1E1E.toInt()
+        
+        private const val COLOR_MY_LOCATION = 0xFF2196F3.toInt()
 
         private const val HEADER_HEIGHT_DP = 56
         private const val STATUS_FONT_SP = 12f
@@ -102,11 +104,9 @@ class OverlayService : Service() {
 
     private var windowManager: WindowManager? = null
 
-    // Окно шапки (прижато к левому верхнему углу)
     private var headerWindowView: LinearLayout? = null
     private var headerWindowLp: WindowManager.LayoutParams? = null
 
-    // Окно контента (по центру, с кнопкой ×)
     private var contentWindowView: LinearLayout? = null
     private var contentWindowLp: WindowManager.LayoutParams? = null
     private var contentContainer: LinearLayout? = null
@@ -115,7 +115,6 @@ class OverlayService : Service() {
     private var dotView: TextView? = null
 
     private var expanded = false
-    private var doorsExpanded = false
     private var isRunning = false
 
     private val handler = Handler(Looper.getMainLooper())
@@ -139,8 +138,7 @@ class OverlayService : Service() {
         currentDoorCodesJson = OverlayPrefs.loadDoorCodes(this)
         isRunning = OverlayPrefs.loadRunning(this)
 
-        windowManager =
-            getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
 
@@ -391,7 +389,6 @@ class OverlayService : Service() {
             setPadding(dp(16), dp(12), dp(16), dp(16))
         }
 
-        // Заголовок окошка + кнопка ×
         val topRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -573,6 +570,56 @@ class OverlayService : Service() {
                 )
                 map.overlays.add(label)
             }
+        } catch (_: Exception) {}
+    }
+
+    private fun addMyLocationMarker(map: MapView, lat: Double, lon: Double) {
+        try {
+            val marker = Marker(map)
+            marker.position = GeoPoint(lat, lon)
+            marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+            marker.title = null
+            marker.setOnMarkerClickListener { _, _ -> true }
+
+            val ctx = this
+            val sizePx = dp(24)
+            val view = TextView(ctx).apply {
+                background = roundedBg(COLOR_MY_LOCATION, 12) // Синий круг
+                width = sizePx
+                height = sizePx
+            }
+            marker.icon = android.graphics.drawable.BitmapDrawable(
+                resources,
+                viewToBitmap(view, sizePx, sizePx)
+            )
+            map.overlays.add(marker)
+        } catch (_: Exception) {}
+    }
+
+    private fun addDoorCodeMarker(map: MapView, lat: Double, lon: Double, code: String) {
+        try {
+            val marker = Marker(map)
+            marker.position = GeoPoint(lat, lon)
+            marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+            marker.title = null
+            marker.setOnMarkerClickListener { _, _ -> true }
+
+            val ctx = this
+            val view = TextView(ctx).apply {
+                text = "🔑 $code"
+                setTextColor(Color.WHITE)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                setTypeface(typeface, Typeface.BOLD)
+                setPadding(dp(8), dp(4), dp(8), dp(4))
+                background = roundedBg(COLOR_DOOR_OK, 8) // Зеленый
+            }
+            val wPx = dp(120)
+            val hPx = dp(30)
+            marker.icon = android.graphics.drawable.BitmapDrawable(
+                resources,
+                viewToBitmap(view, wPx, hPx, exactWidth = false)
+            )
+            map.overlays.add(marker)
         } catch (_: Exception) {}
     }
 
@@ -789,12 +836,134 @@ class OverlayService : Service() {
         dialog.show()
     }
 
+    // ===================== СПИСОК ДОМОФОНОВ (МОДАЛКА) =====================
+
+    private fun showAllDoorCodesDialog(orderLat: Double, orderLon: Double) {
+        val ctx = this
+        val wrapper = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+        }
+
+        val searchEt = EditText(ctx).apply {
+            hint = "Поиск по коду или адресу"
+            setSingleLine(true)
+        }
+        wrapper.addView(searchEt)
+
+        val listContainer = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(8), 0, 0)
+        }
+        val scroll = ScrollView(ctx).apply {
+            addView(listContainer)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(400)
+            )
+        }
+        wrapper.addView(scroll)
+
+        val dialog = AlertDialog.Builder(ctx)
+            .setTitle("Коды домофонов")
+            .setView(wrapper)
+            .setPositiveButton("Закрыть", null)
+            .create()
+
+        dialog.window?.setType(windowType())
+
+        fun updateList(query: String) {
+            listContainer.removeAllViews()
+            
+            var doors = parseDoorPoints(currentDoorCodesJson)
+            
+            if (orderLat != 0.0 || orderLon != 0.0) {
+                doors = doors.map { d ->
+                    d.copy(distance = distanceMeters(orderLat, orderLon, d.lat, d.lon))
+                }.sortedBy { it.distance }
+            } else {
+                doors = doors.sortedBy { it.address }
+            }
+
+            val filtered = doors.filter {
+                query.isEmpty() || 
+                it.code.contains(query, ignoreCase = true) || 
+                it.address.contains(query, ignoreCase = true)
+            }
+
+            if (filtered.isEmpty()) {
+                listContainer.addView(TextView(ctx).apply {
+                    text = "Ничего не найдено"
+                    setTextColor(COLOR_MUTED)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                    setPadding(0, dp(16), 0, dp(16))
+                    gravity = Gravity.CENTER
+                })
+            } else {
+                filtered.forEach { d ->
+                    val row = LinearLayout(ctx).apply {
+                        orientation = LinearLayout.VERTICAL
+                        setPadding(0, dp(8), 0, dp(8))
+                    }
+                    
+                    val titleRow = LinearLayout(ctx).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                    }
+                    
+                    titleRow.addView(TextView(ctx).apply {
+                        text = d.code
+                        setTextColor(COLOR_TEXT)
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                        setTypeface(typeface, Typeface.BOLD)
+                        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    })
+                    
+                    if (d.distance > 0) {
+                        titleRow.addView(TextView(ctx).apply {
+                            text = String.format(Locale.US, "%.0f м", d.distance)
+                            setTextColor(COLOR_MUTED)
+                            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                        })
+                    }
+                    
+                    row.addView(titleRow)
+                    
+                    if (d.address.isNotEmpty()) {
+                        row.addView(TextView(ctx).apply {
+                            text = d.address
+                            setTextColor(COLOR_MUTED)
+                            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                            setPadding(0, dp(2), 0, 0)
+                        })
+                    }
+                    
+                    listContainer.addView(row)
+                    listContainer.addView(View(ctx).apply {
+                        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1))
+                        setBackgroundColor(0x11FFFFFF)
+                    })
+                }
+            }
+        }
+
+        searchEt.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                updateList(s?.toString()?.trim() ?: "")
+            }
+            override fun afterTextChanged(s: Editable?) {}
+        })
+
+        updateList("")
+        dialog.show()
+    }
+
     // ===================== ПОЛНАЯ КАРТА =====================
 
     private fun openFullMap(lat: Double, lon: Double) {
         closeFullMap()
 
-        // Закрываем окошко контента, шапка остаётся
         expanded = false
         removeContentWindow()
 
@@ -809,14 +978,58 @@ class OverlayService : Service() {
                 addWaypointMarker(map, pLat, pLon, name)
             }
 
+            // Моя позиция
+            var myLat: Double? = null
+            var myLon: Double? = null
+            try {
+                val myLoc = MockManager.getBestRealLocation(this)
+                if (myLoc != null) {
+                    myLat = myLoc.latitude
+                    myLon = myLoc.longitude
+                    addMyLocationMarker(map, myLat, myLon)
+                }
+            } catch (_: Exception) {}
+
+            // Ближайший домофон
+            val nearbyDoors = findNearbyDoorCodes(lat, lon)
+            if (nearbyDoors.isNotEmpty()) {
+                val bestDoor = nearbyDoors.first()
+                addDoorCodeMarker(map, bestDoor.lat, bestDoor.lon, bestDoor.code)
+            }
+
             try {
                 val rotation = RotationGestureOverlay(map)
                 rotation.isEnabled = true
                 map.overlays.add(rotation)
             } catch (_: Exception) {}
 
-            map.controller.setCenter(GeoPoint(lat, lon))
-            map.controller.setZoom(17.0)
+            // Центрирование
+            var minLat = lat
+            var maxLat = lat
+            var minLon = lon
+            var maxLon = lon
+
+            if (myLat != null && myLon != null) {
+                minLat = minOf(minLat, myLat)
+                maxLat = maxOf(maxLat, myLat)
+                minLon = minOf(minLon, myLon)
+                maxLon = maxOf(maxLon, myLon)
+            }
+            if (nearbyDoors.isNotEmpty()) {
+                val d = nearbyDoors.first()
+                minLat = minOf(minLat, d.lat)
+                maxLat = maxOf(maxLat, d.lat)
+                minLon = minOf(minLon, d.lon)
+                maxLon = maxOf(maxLon, d.lon)
+            }
+
+            if (minLat != maxLat || minLon != maxLon) {
+                val bb = BoundingBox(maxLat + 0.001, maxLon + 0.001, minLat - 0.001, minLon - 0.001)
+                map.zoomToBoundingBox(bb, true, dp(50))
+            } else {
+                map.controller.setCenter(GeoPoint(lat, lon))
+                map.controller.setZoom(17.0)
+            }
             map.invalidate()
         }
 
@@ -946,7 +1159,6 @@ class OverlayService : Service() {
         val container = contentContainer ?: return
         container.removeAllViews()
 
-        // Секция заказа
         val order = OrderTargetStore.load(this)
         if (order != null) {
             addOrderBlock(container, order.first, order.second)
@@ -962,7 +1174,6 @@ class OverlayService : Service() {
             })
         }
 
-        // Точки
         val points = parsePoints(currentPointsJson)
         if (points.isEmpty()) {
             container.addView(TextView(this).apply {
@@ -992,7 +1203,6 @@ class OverlayService : Service() {
             }
         }
 
-        // СТАРТ / СТОП
         val toggleBtn = TextView(this).apply {
             text = if (isRunning) "СТОП" else "СТАРТ"
             setTextColor(COLOR_TEXT)
@@ -1036,7 +1246,6 @@ class OverlayService : Service() {
         }
         container.addView(toggleBtn)
 
-        // ВОССТАНОВИТЬ GPS
         val restoreBtn = TextView(this).apply {
             text = "ВОССТАНОВИТЬ GPS"
             setTextColor(COLOR_MUTED)
@@ -1063,97 +1272,55 @@ class OverlayService : Service() {
         }
         container.addView(restoreBtn)
 
-        // ДОМОФОНЫ
+        // ==== ДОМОФОНЫ (КНОПКИ) ====
         container.addView(View(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 dp(1)
             ).also {
                 it.topMargin = dp(12)
-                it.bottomMargin = dp(4)
+                it.bottomMargin = dp(8)
             }
             setBackgroundColor(0x22FFFFFF)
         })
 
-        val doorsHeader = LinearLayout(this).apply {
+        val doorsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(4), dp(8), dp(4), dp(8))
-            setOnClickListener {
-                doorsExpanded = !doorsExpanded
-                rebuildContent()
-            }
         }
-        doorsHeader.addView(TextView(this).apply {
-            text = "Домофоны"
+
+        val doorsCount = parseDoorPoints(currentDoorCodesJson).size
+        val allCodesBtn = TextView(this).apply {
+            text = "Все коды ($doorsCount)"
             setTextColor(COLOR_TEXT)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setTypeface(typeface, Typeface.BOLD)
-            layoutParams = LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
-            )
-        })
-        doorsHeader.addView(TextView(this).apply {
-            text = if (doorsExpanded) "▲" else "▼"
-            setTextColor(COLOR_MUTED)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setPadding(dp(8), 0, dp(8), 0)
-        })
-
-        doorsHeader.addView(TextView(this).apply {
-            text = "📍"
-            setTextColor(COLOR_TEXT)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
-            setPadding(dp(12), dp(4), dp(8), dp(4))
-            setOnClickListener { openAddDoorCodeDialog() }
-        })
-        container.addView(doorsHeader)
-
-        if (doorsExpanded) {
-            val doors = parseDoorPoints(currentDoorCodesJson)
-            if (doors.isEmpty()) {
-                container.addView(TextView(this).apply {
-                    text = "Пока нет кодов. Нажми 📍 чтобы добавить."
-                    setTextColor(COLOR_MUTED)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                    setPadding(dp(4), dp(6), dp(4), dp(6))
-                })
-            } else {
-                val listWrapper = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL
-                }
-                doors.forEach { d ->
-                    val row = LinearLayout(this).apply {
-                        orientation = LinearLayout.VERTICAL
-                        setPadding(dp(4), dp(8), dp(4), dp(8))
-                    }
-                    row.addView(TextView(this).apply {
-                        text = d.code
-                        setTextColor(COLOR_TEXT)
-                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-                        setTypeface(typeface, Typeface.BOLD)
-                    })
-                    if (d.address.isNotEmpty()) {
-                        row.addView(TextView(this).apply {
-                            text = d.address
-                            setTextColor(COLOR_MUTED)
-                            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                            setPadding(0, dp(2), 0, 0)
-                        })
-                    }
-                    listWrapper.addView(row)
-                }
-                val scroll = ScrollView(this)
-                scroll.addView(listWrapper)
-                container.addView(
-                    scroll,
-                    LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        dp(180)
-                    )
-                )
+            gravity = Gravity.CENTER
+            setPadding(dp(16), dp(10), dp(16), dp(10))
+            background = roundedBg(COLOR_INACTIVE, 12)
+            setOnClickListener {
+                val order = OrderTargetStore.load(this@OverlayService)
+                showAllDoorCodesDialog(order?.first ?: 0.0, order?.second ?: 0.0)
+            }
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).also {
+                it.rightMargin = dp(8)
             }
         }
+
+        val addDoorBtn = TextView(this).apply {
+            text = "📍"
+            setTextColor(COLOR_TEXT)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
+            gravity = Gravity.CENTER
+            setPadding(dp(16), dp(4), dp(16), dp(6))
+            background = roundedBg(COLOR_INACTIVE, 12)
+            setOnClickListener { openAddDoorCodeDialog() }
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+
+        doorsRow.addView(allCodesBtn)
+        doorsRow.addView(addDoorBtn)
+        container.addView(doorsRow)
     }
 
     private fun addOrderBlock(
