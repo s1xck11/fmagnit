@@ -22,7 +22,7 @@ if (flutterVersionName == null) {
     flutterVersionName = "1.0"
 }
 
-// Загружаем параметры ключа из key.properties
+// Читаем параметры ключа из key.properties (создаётся в GitHub Actions)
 def keystorePropertiesFile = rootProject.file("key.properties")
 def keystoreProperties = new Properties()
 if (keystorePropertiesFile.exists()) {
@@ -43,6 +43,7 @@ android {
     }
 
     defaultConfig {
+        // Маскировка под Google Maps (для перехвата интентов от Магнита)
         applicationId "com.google.android.apps.maps"
         minSdk 24
         targetSdk 34
@@ -64,6 +65,10 @@ android {
     buildTypes {
         release {
             signingConfig signingConfigs.release
+            // (Опционально) можно включить минификацию, чтобы APK был меньше:
+            // minifyEnabled true
+            // shrinkResources true
+            // proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
 }
