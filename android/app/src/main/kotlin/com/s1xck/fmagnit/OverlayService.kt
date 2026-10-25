@@ -12,6 +12,8 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.location.Location
+import android.location.LocationManager
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -305,6 +307,37 @@ class OverlayService : Service() {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         else @Suppress("DEPRECATION")
             WindowManager.LayoutParams.TYPE_PHONE
+
+    // ===================== ПОЛУЧЕНИЕ КООРДИНАТ =====================
+
+    private fun getCurrentLocation(): Location? {
+        try {
+            val lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+            val providers = listOf(
+                LocationManager.GPS_PROVIDER,
+                LocationManager.NETWORK_PROVIDER,
+                LocationManager.PASSIVE_PROVIDER
+            )
+            var best: Location? = null
+            for (p in providers) {
+                val loc = try {
+                    lm.getLastKnownLocation(p)
+                } catch (_: SecurityException) {
+                    null
+                } catch (_: Exception) {
+                    null
+                }
+                if (loc != null) {
+                    if (best == null || loc.time > best.time) {
+                        best = loc
+                    }
+                }
+            }
+            return best
+        } catch (_: Exception) {
+            return null
+        }
+    }
 
     // ===================== ОКНО ШАПКИ =====================
 
@@ -746,11 +779,7 @@ class OverlayService : Service() {
     // ===================== GPS-ДИАЛОГ =====================
 
     private fun openAddDoorCodeDialog() {
-        val last: android.location.Location? = try {
-            MockManager.getBestRealLocation(this)
-        } catch (_: Exception) {
-            null
-        }
+        val last: Location? = getCurrentLocation()
 
         if (last == null) {
             Toast.makeText(
@@ -919,7 +948,7 @@ class OverlayService : Service() {
                         layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
                     })
                     
-                    if (d.distance > 0) {
+                    if (d.distance > 0 && d.distance < 500000.0) { // Не показываем расстояние, если оно больше 500 км (значит, координаты битые)
                         titleRow.addView(TextView(ctx).apply {
                             text = String.format(Locale.US, "%.0f м", d.distance)
                             setTextColor(COLOR_MUTED)
@@ -982,7 +1011,7 @@ class OverlayService : Service() {
             var myLat: Double? = null
             var myLon: Double? = null
             try {
-                val myLoc = MockManager.getBestRealLocation(this)
+                val myLoc = getCurrentLocation()
                 if (myLoc != null) {
                     myLat = myLoc.latitude
                     myLon = myLoc.longitude
