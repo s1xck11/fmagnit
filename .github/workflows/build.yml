@@ -10,7 +10,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -42,18 +41,8 @@ jobs:
             curl -L -o gradle/wrapper/gradle-wrapper.jar https://raw.githubusercontent.com/gradle/gradle/v7.5.0/gradle/wrapper/gradle-wrapper.jar
           fi
 
-      - name: Build debug APK
-        run: flutter build apk --debug
-
       - name: Build release APK
         run: flutter build apk --release
-
-      - name: Upload debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: fmagnit-debug-apk
-          path: build/app/outputs/flutter-apk/app-debug.apk
-          if-no-files-found: error
 
       - name: Upload release APK
         uses: actions/upload-artifact@v4
