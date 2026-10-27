@@ -27,6 +27,7 @@ import android.text.InputType
 import android.text.TextUtils
 import android.text.TextWatcher
 import android.util.TypedValue
+import android.view.ContextThemeWrapper
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -112,7 +113,7 @@ class OverlayService : Service() {
     private var headerWindowView: LinearLayout? = null
     private var headerWindowLp: WindowManager.LayoutParams? = null
 
-    private var contentWindowView: LinearLayout? = null
+    private var contentWindowView: ScrollView? = null
     private var contentWindowLp: WindowManager.LayoutParams? = null
     private var contentContainer: LinearLayout? = null
 
@@ -136,7 +137,6 @@ class OverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
         try {
-            // Проверяем, не упали ли мы в прошлый раз, и если да — пишем в лог
             checkLastStepForCrash()
 
             initOsmdroid()
@@ -185,25 +185,25 @@ class OverlayService : Service() {
 
     private fun step(s: String) {
         try {
-            File(filesDir, ".fm_step").writeText(s)
+            val prefs = getSharedPreferences("fm_crash_prefs", Context.MODE_PRIVATE)
+            prefs.edit().putString("last_step", s).putLong("step_time", System.currentTimeMillis()).apply()
         } catch (_: Throwable) {}
     }
 
     private fun checkLastStepForCrash() {
         try {
-            val f = File(filesDir, ".fm_step")
-            if (f.exists()) {
-                val age = System.currentTimeMillis() - f.lastModified()
-                if (age < 60_000) { // если упали меньше минуты назад
-                    val stepText = f.readText()
-                    CrashLogger.log(
-                        this,
-                        "CRASH_WAS_AT_STEP",
-                        Throwable("Ошибка произошла на шаге: $stepText")
-                    )
-                }
-                f.delete()
+            val prefs = getSharedPreferences("fm_crash_prefs", Context.MODE_PRIVATE)
+            val stepText = prefs.getString("last_step", null)
+            val stepTime = prefs.getLong("step_time", 0L)
+            // Если упали меньше минуты назад
+            if (stepText != null && (System.currentTimeMillis() - stepTime < 60000)) {
+                CrashLogger.log(
+                    this,
+                    "CRASH_WAS_AT_STEP",
+                    Throwable("Ошибка произошла на шаге: $stepText")
+                )
             }
+            prefs.edit().remove("last_step").apply()
         } catch (_: Throwable) {}
     }
 
@@ -244,7 +244,7 @@ class OverlayService : Service() {
                         OrderTargetStore.save(this, lat, lon)
                         handler.post { 
                             rebuildContent()
-                            // Авто-открытие карты временно отключено
+                            // Авто-открытие карты отключено для стабильности
                         }
                     }
                 }
@@ -264,7 +264,9 @@ class OverlayService : Service() {
             OverlayBridge.onOverlayStateChanged {}
             closeFullMap()
             removeContentWindow()
-            headerWindowView?.let { windowManager?.removeView(it) }
+            if (headerWindowView?.parent != null) {
+                windowManager?.removeView(headerWindowView)
+            }
             headerWindowView = null
             OverlayBridge.setOverlayRunning(false)
             releaseWakeLock()
@@ -440,7 +442,9 @@ class OverlayService : Service() {
             }
 
             step("buildHeader_before_add")
-            windowManager?.addView(header, headerWindowLp)
+            if (headerWindowView?.parent == null) {
+                windowManager?.addView(header, headerWindowLp)
+            }
             step("buildHeader_done")
         } catch (e: Throwable) {
             CrashLogger.log(this, "buildHeaderWindow", e)
@@ -453,7 +457,7 @@ class OverlayService : Service() {
     // ===================== ОКНО КОНТЕНТА =====================
 
     private fun showContentWindow() {
-        if (contentWindowView != null) {
+        if (contentWindowView != null && contentWindowView?.parent != null) {
             rebuildContent()
             return
         }
@@ -463,10 +467,17 @@ class OverlayService : Service() {
             val ctx = this
             val dm = resources.displayMetrics
             val w = (dm.widthPixels * 0.9).toInt()
+            // Ограничиваем высоту окна 85% экрана, чтобы избежать BadTokenException
+            val h = (dm.heightPixels * 0.85).toInt()
 
-            val wrapper = LinearLayout(ctx).apply {
-                orientation = LinearLayout.VERTICAL
+            // Используем ScrollView как корень, чтобы контент не вылезал за пределы
+            val scrollWrapper = ScrollView(ctx).apply {
                 background = roundedBg(COLOR_HEADER_BG, 16)
+                isFillViewport = true
+            }
+
+            val inner = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
                 setPadding(dp(16), dp(12), dp(16), dp(16))
             }
 
@@ -492,9 +503,9 @@ class OverlayService : Service() {
                 setPadding(dp(12), dp(0), dp(12), dp(4))
                 setOnClickListener { toggleExpanded() }
             })
-            wrapper.addView(topRow)
+            inner.addView(topRow)
 
-            wrapper.addView(View(ctx).apply {
+            inner.addView(View(ctx).apply {
                 layoutParams = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     dp(1)
@@ -508,13 +519,14 @@ class OverlayService : Service() {
             contentContainer = LinearLayout(ctx).apply {
                 orientation = LinearLayout.VERTICAL
             }
-            wrapper.addView(contentContainer)
+            inner.addView(contentContainer)
+            scrollWrapper.addView(inner)
 
-            contentWindowView = wrapper
+            contentWindowView = scrollWrapper
 
             contentWindowLp = WindowManager.LayoutParams(
                 w,
-                WindowManager.LayoutParams.WRAP_CONTENT,
+                h,
                 windowType(),
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                         WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
@@ -524,7 +536,9 @@ class OverlayService : Service() {
             }
 
             step("showContent_before_add")
-            windowManager?.addView(wrapper, contentWindowLp)
+            if (contentWindowView?.parent == null) {
+                windowManager?.addView(scrollWrapper, contentWindowLp)
+            }
             step("showContent_after_add")
             rebuildContent()
             step("showContent_done")
@@ -539,7 +553,9 @@ class OverlayService : Service() {
 
     private fun removeContentWindow() {
         try {
-            contentWindowView?.let { windowManager?.removeView(it) }
+            if (contentWindowView?.parent != null) {
+                windowManager?.removeView(contentWindowView)
+            }
         } catch (_: Throwable) {}
         contentWindowView = null
         contentWindowLp = null
@@ -571,8 +587,9 @@ class OverlayService : Service() {
     // ===================== КАРТА =====================
 
     private fun createMapView(): MapView {
-        val ctx = this
-        val map = MapView(ctx)
+        // Обязательно используем ContextThemeWrapper для MapView!
+        val themedCtx = ContextThemeWrapper(this, android.R.style.Theme_DeviceDefault)
+        val map = MapView(themedCtx)
         try {
             map.setTileSource(TileSourceFactory.MAPNIK)
             map.setUseDataConnection(true)
@@ -709,13 +726,14 @@ class OverlayService : Service() {
     ): Bitmap? {
         return try {
             val wSpec = if (exactWidth)
-                View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY)
+                View.MeasureSpec.makeMeasureSpec(widthPx.coerceAtLeast(1), View.MeasureSpec.EXACTLY)
             else
                 View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
-            val hSpec = View.MeasureSpec.makeMeasureSpec(heightPx, View.MeasureSpec.AT_MOST)
+            val hSpec = View.MeasureSpec.makeMeasureSpec(heightPx.coerceAtLeast(1), View.MeasureSpec.AT_MOST)
             view.measure(wSpec, hSpec)
-            val w = if (exactWidth) widthPx else view.measuredWidth.coerceAtLeast(1)
-            val h = heightPx
+            
+            val w = if (exactWidth) widthPx.coerceAtLeast(1) else view.measuredWidth.coerceAtLeast(1)
+            val h = heightPx.coerceAtLeast(1)
             view.layout(0, 0, w, h)
             
             val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
@@ -839,22 +857,23 @@ class OverlayService : Service() {
             val lat = last.latitude
             val lon = last.longitude
 
-            val ctx = this
-            val wrapper = LinearLayout(ctx).apply {
+            // Обязательно используем ContextThemeWrapper для диалогов!
+            val dialogCtx = ContextThemeWrapper(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            val wrapper = LinearLayout(dialogCtx).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(24), dp(8), dp(24), 0)
             }
 
-            val addrEt = EditText(ctx).apply {
+            val addrEt = EditText(dialogCtx).apply {
                 hint = "Адрес или название"
                 setSingleLine(true)
             }
-            val codeEt = EditText(ctx).apply {
+            val codeEt = EditText(dialogCtx).apply {
                 hint = "Код домофона (например, 1234#)"
                 setSingleLine(true)
                 inputType = InputType.TYPE_CLASS_TEXT
             }
-            val coordsTv = TextView(ctx).apply {
+            val coordsTv = TextView(dialogCtx).apply {
                 text = String.format(Locale.US, "Координаты: %.6f, %.6f", lat, lon)
                 setTextColor(COLOR_MUTED)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
@@ -865,7 +884,7 @@ class OverlayService : Service() {
             wrapper.addView(codeEt)
             wrapper.addView(coordsTv)
 
-            val dialog = AlertDialog.Builder(ctx)
+            val dialog = AlertDialog.Builder(dialogCtx)
                 .setTitle("Новый код домофона")
                 .setView(wrapper)
                 .setPositiveButton("Сохранить", null)
@@ -882,7 +901,7 @@ class OverlayService : Service() {
                         codeEt.error = "Введи код"
                         return@setOnClickListener
                     }
-                    val newId = DoorCodeNativeStore.add(ctx, code, addr, lat, lon)
+                    val newId = DoorCodeNativeStore.add(this, code, addr, lat, lon)
                     if (newId != null) {
                         reloadDoorCodesFromFile()
                         val bcast = Intent(ACTION_DOOR_CODES_CHANGED)
@@ -890,9 +909,9 @@ class OverlayService : Service() {
                         try { sendBroadcast(bcast) } catch (_: Throwable) {}
                         dialog.dismiss()
                         rebuildContent()
-                        Toast.makeText(ctx, "Код сохранён", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this, "Код сохранён", Toast.LENGTH_SHORT).show()
                     } else {
-                        Toast.makeText(ctx, "Не удалось сохранить", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this, "Не удалось сохранить", Toast.LENGTH_SHORT).show()
                     }
                 }
             }
@@ -909,23 +928,23 @@ class OverlayService : Service() {
     private fun showAllDoorCodesDialog(orderLat: Double, orderLon: Double) {
         try {
             step("allDoorsDialog_start")
-            val ctx = this
-            val wrapper = LinearLayout(ctx).apply {
+            val dialogCtx = ContextThemeWrapper(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            val wrapper = LinearLayout(dialogCtx).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(16), dp(16), dp(16), dp(16))
             }
 
-            val searchEt = EditText(ctx).apply {
+            val searchEt = EditText(dialogCtx).apply {
                 hint = "Поиск по коду или адресу"
                 setSingleLine(true)
             }
             wrapper.addView(searchEt)
 
-            val listContainer = LinearLayout(ctx).apply {
+            val listContainer = LinearLayout(dialogCtx).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(0, dp(8), 0, 0)
             }
-            val scroll = ScrollView(ctx).apply {
+            val scroll = ScrollView(dialogCtx).apply {
                 addView(listContainer)
                 layoutParams = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
@@ -934,7 +953,7 @@ class OverlayService : Service() {
             }
             wrapper.addView(scroll)
 
-            val dialog = AlertDialog.Builder(ctx)
+            val dialog = AlertDialog.Builder(dialogCtx)
                 .setTitle("Коды домофонов")
                 .setView(wrapper)
                 .setPositiveButton("Закрыть", null)
@@ -963,7 +982,7 @@ class OverlayService : Service() {
                     }
 
                     if (filtered.isEmpty()) {
-                        listContainer.addView(TextView(ctx).apply {
+                        listContainer.addView(TextView(dialogCtx).apply {
                             text = "Ничего не найдено"
                             setTextColor(COLOR_MUTED)
                             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
@@ -972,17 +991,17 @@ class OverlayService : Service() {
                         })
                     } else {
                         filtered.forEach { d ->
-                            val row = LinearLayout(ctx).apply {
+                            val row = LinearLayout(dialogCtx).apply {
                                 orientation = LinearLayout.VERTICAL
                                 setPadding(0, dp(8), 0, dp(8))
                             }
                             
-                            val titleRow = LinearLayout(ctx).apply {
+                            val titleRow = LinearLayout(dialogCtx).apply {
                                 orientation = LinearLayout.HORIZONTAL
                                 gravity = Gravity.CENTER_VERTICAL
                             }
                             
-                            titleRow.addView(TextView(ctx).apply {
+                            titleRow.addView(TextView(dialogCtx).apply {
                                 text = d.code
                                 setTextColor(COLOR_TEXT)
                                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
@@ -991,7 +1010,7 @@ class OverlayService : Service() {
                             })
                             
                             if (d.distance > 0 && d.distance < 500000.0) {
-                                titleRow.addView(TextView(ctx).apply {
+                                titleRow.addView(TextView(dialogCtx).apply {
                                     text = String.format(Locale.US, "%.0f м", d.distance)
                                     setTextColor(COLOR_MUTED)
                                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
@@ -1001,7 +1020,7 @@ class OverlayService : Service() {
                             row.addView(titleRow)
                             
                             if (d.address.isNotEmpty()) {
-                                row.addView(TextView(ctx).apply {
+                                row.addView(TextView(dialogCtx).apply {
                                     text = d.address
                                     setTextColor(COLOR_MUTED)
                                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
@@ -1010,7 +1029,7 @@ class OverlayService : Service() {
                             }
                             
                             listContainer.addView(row)
-                            listContainer.addView(View(ctx).apply {
+                            listContainer.addView(View(dialogCtx).apply {
                                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1))
                                 setBackgroundColor(0x11FFFFFF)
                             })
@@ -1211,7 +1230,9 @@ class OverlayService : Service() {
             }
 
             step("openFullMap_before_add")
-            windowManager?.addView(wrapper, fullMapLayoutParams)
+            if (wrapper.parent == null) {
+                windowManager?.addView(wrapper, fullMapLayoutParams)
+            }
             fullMapWrapper = wrapper
             step("openFullMap_done")
         } catch (e: Throwable) {
@@ -1222,7 +1243,9 @@ class OverlayService : Service() {
 
     private fun closeFullMap() {
         try {
-            fullMapWrapper?.let { windowManager?.removeView(it) }
+            if (fullMapWrapper?.parent != null) {
+                windowManager?.removeView(fullMapWrapper)
+            }
         } catch (_: Throwable) {}
         fullMapWrapper = null
         fullMapLayoutParams = null
@@ -1236,7 +1259,7 @@ class OverlayService : Service() {
     private fun rebuildContent() {
         try {
             step("rebuildContent_start")
-            isRunning = OverlayPrefs.loadRunning(this)
+            isRunning = try { MockManager.isRunning() } catch (_: Throwable) { false }
             applyDotColor()
             activeLabel?.text = currentActiveNameOrPlaceholder()
 
