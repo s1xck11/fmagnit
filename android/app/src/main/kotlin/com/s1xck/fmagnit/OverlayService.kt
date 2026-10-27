@@ -57,6 +57,7 @@ class OverlayService : Service() {
         const val CHANNEL_ID = "fmagnit_overlay"
 
         private const val COLOR_HEADER_BG = 0xFF1E1E1E.toInt()
+        private const val COLOR_STROKE = 0xFF3D3D3D.toInt() // Мягкая обводка
         private const val COLOR_TEXT = 0xFFFFFFFF.toInt()
         private const val COLOR_DOT_ACTIVE = 0xFF009E27.toInt()
         private const val COLOR_DOT_IDLE = 0xFFE30613.toInt()
@@ -201,7 +202,7 @@ class OverlayService : Service() {
                     if (!lat.isNaN() && !lon.isNaN()) {
                         OrderTargetStore.save(this, lat, lon)
                         handler.post { 
-                            // АВТО-ОТКРЫТИЕ КАРТЫ ПРИ ПОЛУЧЕНИИ ЗАКАЗА
+                            // Автооткрытие карты при получении заказа
                             openFullMap(lat, lon)
                         }
                     }
@@ -285,11 +286,14 @@ class OverlayService : Service() {
         TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics
     ).toInt()
 
-    private fun roundedBg(color: Int, radiusDp: Int): GradientDrawable {
+    private fun roundedBg(color: Int, radiusDp: Int, strokeColor: Int? = null, strokeWidthDp: Int = 1): GradientDrawable {
         val d = GradientDrawable()
         d.shape = GradientDrawable.RECTANGLE
         d.cornerRadius = dp(radiusDp).toFloat()
         d.setColor(color)
+        if (strokeColor != null) {
+            d.setStroke(dp(strokeWidthDp), strokeColor)
+        }
         return d
     }
 
@@ -348,8 +352,11 @@ class OverlayService : Service() {
 
         headerWindowView = header
 
+        // Ширина шапки теперь 65% от экрана
+        val headerWidth = (screenW * 0.65).toInt()
+
         headerWindowLp = WindowManager.LayoutParams(
-            screenW / 2, dp(HEADER_HEIGHT_DP), windowType(),
+            headerWidth, dp(HEADER_HEIGHT_DP), windowType(),
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
         ).apply {
@@ -381,7 +388,8 @@ class OverlayService : Service() {
 
             val wrapper = LinearLayout(ctx).apply {
                 orientation = LinearLayout.VERTICAL
-                background = roundedBg(COLOR_HEADER_BG, 16)
+                // Добавляем обводку окну контента
+                background = roundedBg(COLOR_HEADER_BG, 16, COLOR_STROKE, 1)
                 setPadding(dp(16), dp(12), dp(16), dp(16))
             }
 
@@ -816,7 +824,8 @@ class OverlayService : Service() {
 
             val wrapper = LinearLayout(ctx).apply {
                 orientation = LinearLayout.VERTICAL
-                background = roundedBg(COLOR_HEADER_BG, 16)
+                // Обводка для карты, чтобы выглядело единообразно
+                background = roundedBg(COLOR_HEADER_BG, 16, COLOR_STROKE, 1)
                 setPadding(dp(8), dp(8), dp(8), dp(8))
                 addView(container, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
             }
