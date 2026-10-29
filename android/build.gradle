@@ -1,5 +1,10 @@
-// Примечание: Репозитории теперь управляются в settings.gradle через dependencyResolutionManagement.
-// Блок allprojects удалён, чтобы избежать конфликтов Gradle.
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+        maven { url 'https://jitpack.io' } // <-- ТОЛЬКО ЭТА СТРОКА ДОБАВЛЕНА
+    }
+}
 
 rootProject.buildDir = "../build"
 subprojects {
