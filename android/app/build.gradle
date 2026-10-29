@@ -55,11 +55,8 @@ dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib:1.9.22"
     implementation "androidx.core:core-ktx:1.12.0"
 
-    // НОВОЕ: BRouter как библиотека через JitPack
-    // Версия 1.7.5 — последняя стабильная на момент написания
-    // Если не найдётся — заменить на "com.github.abrensch.brouter:brouter-core:1.7.5"
-    implementation "com.github.abrensch.brouter:brouter-core:1.7.5"
+    // ПРАВИЛЬНАЯ зависимость BRouter через JitPack
+    implementation "com.github.abrensch:brouter:1.7.5"
 
-    // OSMDroid (уже должен быть, проверяем)
     implementation "org.osmdroid:osmdroid-android:6.1.18"
 }
