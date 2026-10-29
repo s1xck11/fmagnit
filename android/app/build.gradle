@@ -4,34 +4,24 @@ plugins {
     id "dev.flutter.flutter-gradle-plugin"
 }
 
-def localProperties = new Properties()
-def localPropertiesFile = rootProject.file("local.properties")
-if (localPropertiesFile.exists()) {
-    localPropertiesFile.withReader("UTF-8") { reader ->
-        localProperties.load(reader)
-    }
-}
-
-def flutterVersionCode = localProperties.getProperty("flutter.versionCode")
-if (flutterVersionCode == null) {
-    flutterVersionCode = "1"
-}
-
-def flutterVersionName = localProperties.getProperty("flutter.versionName")
-if (flutterVersionName == null) {
-    flutterVersionName = "1.0"
-}
-
-// Читаем параметры ключа из key.properties (создаётся в GitHub Actions)
-def keystorePropertiesFile = rootProject.file("key.properties")
-def keystoreProperties = new Properties()
-if (keystorePropertiesFile.exists()) {
-    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
-}
-
 android {
     namespace "com.s1xck.fmagnit"
     compileSdk 34
+
+    defaultConfig {
+        applicationId "com.s1xck.fmagnit"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "0.1.0"
+    }
+
+    buildTypes {
+        release {
+            signingConfig signingConfigs.debug
+            minifyEnabled false
+        }
+    }
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
@@ -42,41 +32,25 @@ android {
         jvmTarget = "17"
     }
 
-    defaultConfig {
-        // Маскировка под Google Maps (для перехвата интентов от Магнита)
-        applicationId "com.google.android.apps.maps"
-        minSdk 24
-        targetSdk 34
-        versionCode flutterVersionCode.toInteger()
-        versionName flutterVersionName
-    }
-
-    signingConfigs {
-        release {
-            if (keystorePropertiesFile.exists()) {
-                storeFile file(keystoreProperties['storeFile'])
-                storePassword keystoreProperties['storePassword']
-                keyAlias keystoreProperties['keyAlias']
-                keyPassword keystoreProperties['keyPassword']
-            }
-        }
-    }
-
-    buildTypes {
-        release {
-            signingConfig signingConfigs.release
-            // (Опционально) можно включить минификацию, чтобы APK был меньше:
-            // minifyEnabled true
-            // shrinkResources true
-            // proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-        }
+    packagingOptions {
+        // BRouter тянет много нативных библиотек, исключаем дубликаты
+        pickFirst '**/libc++_shared.so'
     }
 }
 
 flutter {
-    source "../.."
+    source '../..'
 }
 
 dependencies {
-    implementation 'org.osmdroid:osmdroid-android:6.1.18'
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:1.9.22"
+    implementation "androidx.core:core-ktx:1.12.0"
+
+    // НОВОЕ: BRouter как библиотека через JitPack
+    // Версия 1.7.5 — последняя стабильная на момент написания
+    // Если не найдётся — заменить на "com.github.abrensch.brouter:brouter-core:1.7.5"
+    implementation "com.github.abrensch.brouter:brouter-core:1.7.5"
+
+    // OSMDroid (уже должен быть, проверяем)
+    implementation "org.osmdroid:osmdroid-android:6.1.18"
 }

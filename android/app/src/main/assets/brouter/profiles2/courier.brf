@@ -1,0 +1,76 @@
+# Courier profile for BRouter
+# Optimized for electric scooter/moped in city
+# Priority: bike lanes > residential roads > secondary roads
+# Avoid: motorways, trunk roads, one-way against traffic
+
+---context:global
+# Global context for the routing profile
+
+# Vehicle type: bicycle-like (scooter/moped)
+vehicle: bike
+
+# Speed settings (km/h)
+maxspeed: 35
+defaultspeed: 25
+
+# Turn costs (seconds)
+turncost: 5
+
+# U-turn penalty
+uturncost: 30
+
+---context:way
+# Way context: defines cost for each road type
+
+# Bike lanes and cycleways (highest priority)
+highway=cycleway|cost=1|turncost=0
+highway=path|bicycle=yes|cost=2|turncost=0
+
+# Residential roads (good for couriers)
+highway=residential|cost=3|turncost=2
+highway=living_street|cost=2|turncost=1
+
+# Service roads (alleys, parking lots)
+highway=service|cost=4|turncost=2
+
+# Secondary and tertiary roads (acceptable)
+highway=tertiary|cost=5|turncost=3
+highway=secondary|cost=6|turncost=4
+
+# Primary roads (avoid if possible)
+highway=primary|cost=10|turncost=5
+
+# Motorways and trunk roads (forbidden for scooters)
+highway=motorway|cost=1000000
+highway=trunk|cost=1000000
+highway=motorway_link|cost=1000000
+highway=trunk_link|cost=1000000
+
+# Footways (only if bicycle=yes)
+highway=footway|bicycle=yes|cost=3|turncost=1
+highway=footway|cost=1000000
+
+# One-way handling
+oneway=yes|oneway:bicycle=no|cost=3
+oneway=yes|cost=1000000
+
+# Surface quality
+surface=asphalt|cost=1
+surface=paved|cost=2
+surface=gravel|cost=5
+surface=unpaved|cost=8
+surface=sand|cost=1000000
+
+# Smoothness
+smoothness=excellent|cost=1
+smoothness=good|cost=2
+smoothness=intermediate|cost=4
+smoothness=bad|cost=8
+smoothness=very_bad|cost=1000000
+smoothness=horrible|cost=1000000
+smoothness=impassable|cost=1000000
+
+# Traffic density (if tagged)
+traffic_calming=|cost=2
+lit=yes|cost=-1
+lit=no|cost=2

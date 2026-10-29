@@ -14,6 +14,7 @@ class MainActivity: FlutterActivity() {
     private val OVERLAY_CHANNEL = "com.s1xck.fmagnit/overlay"
     private val OVERLAY_EVENT_CHANNEL = "com.s1xck.fmagnit/overlay_events"
     private val MOCK_CHANNEL = "com.s1xck.fmagnit/mock_location"
+    private val ROUTE_CHANNEL = "com.s1xck.fmagnit/route"  // НОВОЕ
 
     private var overlayEventSink: EventChannel.EventSink? = null
     private val handler = Handler(Looper.getMainLooper())
@@ -21,12 +22,15 @@ class MainActivity: FlutterActivity() {
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
+        // НОВОЕ: Инициализация RouteService при старте приложения
+        RouteService.getInstance(this).initialize()
+
         // 1. Event Channel для реактивного обновления состояния оверлея
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, OVERLAY_EVENT_CHANNEL)
             .setStreamHandler(object : EventChannel.StreamHandler {
                 override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
                     overlayEventSink = events
-                    sendOverlayState() // Отправляем текущее состояние сразу при подписке
+                    sendOverlayState()
                 }
 
                 override fun onCancel(arguments: Any?) {
@@ -126,7 +130,41 @@ class MainActivity: FlutterActivity() {
                 }
             }
 
-        // 4. Подписка на изменения состояния из OverlayService для отправки во Flutter
+        // НОВОЕ: 4. Method Channel для маршрутизации
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, ROUTE_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "hasMapsForLocation" -> {
+                        val lat = call.argument<Double>("latitude") ?: 0.0
+                        val lon = call.argument<Double>("longitude") ?: 0.0
+                        result.success(RouteService.getInstance(this).hasMapsForLocation(lat, lon))
+                    }
+                    "getAvailableRegions" -> {
+                        result.success(RouteService.getInstance(this).getAvailableRegions())
+                    }
+                    "buildRoute" -> {
+                        val fromLat = call.argument<Double>("fromLat") ?: 0.0
+                        val fromLon = call.argument<Double>("fromLon") ?: 0.0
+                        val toLat = call.argument<Double>("toLat") ?: 0.0
+                        val toLon = call.argument<Double>("toLon") ?: 0.0
+
+                        val route = RouteService.getInstance(this).buildRoute(fromLat, fromLon, toLat, toLon)
+                        result.success(mapOf(
+                            "points" to route.points.map { listOf(it.first, it.second) },
+                            "distanceMeters" to route.distanceMeters,
+                            "timeSeconds" to route.timeSeconds,
+                            "source" to route.source
+                        ))
+                    }
+                    "clearCache" -> {
+                        RouteService.getInstance(this).clearCache()
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
+        // 5. Подписка на изменения состояния из OverlayService
         OverlayBridge.onOverlayStateChanged {
             handler.post { sendOverlayState() }
         }
@@ -161,7 +199,7 @@ class MainActivity: FlutterActivity() {
     }
 
     private fun hasAccessibilityPermission(): Boolean {
-        return false // Заглушка. Реализуется при наличии конкретного AccessibilityService
+        return false
     }
 
     private fun openAccessibilitySettings() {
