@@ -13,7 +13,6 @@ pluginManagement {
         google()
         mavenCentral()
         gradlePluginPortal()
-        // ВАЖНО: Добавляем JitPack сюда
         maven { url 'https://jitpack.io' }
     }
 }
@@ -26,12 +25,12 @@ plugins {
 
 include ":app"
 
-// ВАЖНО: И сюда тоже, чтобы dependencyResolutionManagement видел JitPack
+// ВАЖНО: Управляем репозиториями только здесь
 dependencyResolutionManagement {
-    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
     repositories {
         google()
         mavenCentral()
-        maven { url 'https://jitpack.io' }
+        maven { url 'https://jitpack.io' } // <-- JITPACK ДОБАВЛЕН СЮДА
     }
 }

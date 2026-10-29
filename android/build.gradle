@@ -1,9 +1,5 @@
-allprojects {
-    repositories {
-        google()
-        mavenCentral()
-    }
-}
+// Примечание: Репозитории теперь управляются в settings.gradle через dependencyResolutionManagement.
+// Блок allprojects удалён, чтобы избежать конфликтов Gradle.
 
 rootProject.buildDir = "../build"
 subprojects {
