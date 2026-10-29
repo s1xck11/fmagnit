@@ -18,8 +18,17 @@ android {
 
     buildTypes {
         release {
+            // В продакшене здесь должен быть твой release signingConfig
             signingConfig signingConfigs.debug
-            minifyEnabled false
+
+            // Включаем сжатие кода (обязательно для shrinkResources)
+            minifyEnabled true
+
+            // Включаем сжатие ресурсов (уменьшает размер APK)
+            shrinkResources true
+
+            // Файл правил для ProGuard/R8 (чтобы не вырезать нужные классы BRouter и OSMDroid)
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
 
