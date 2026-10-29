@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 class RealLocation {
@@ -30,17 +31,31 @@ class MockLocationService {
       MethodChannel('com.s1xck.fmagnit/mock_location');
 
   Future<bool> isMockLocationEnabled() async {
-    final result = await _channel.invokeMethod<bool>('isMockLocationEnabled');
-    return result ?? false;
+    try {
+      final result = await _channel.invokeMethod<bool>('isMockLocationEnabled');
+      return result ?? false;
+    } catch (e) {
+      debugPrint('Ошибка isMockLocationEnabled: $e');
+      return false;
+    }
   }
 
   Future<void> openDeveloperSettings() async {
-    await _channel.invokeMethod('openDeveloperSettings');
+    try {
+      await _channel.invokeMethod('openDeveloperSettings');
+    } catch (e) {
+      debugPrint('Ошибка openDeveloperSettings: $e');
+    }
   }
 
   Future<bool> isMockRunning() async {
-    final r = await _channel.invokeMethod<bool>('isMockRunning');
-    return r ?? false;
+    try {
+      final r = await _channel.invokeMethod<bool>('isMockRunning');
+      return r ?? false;
+    } catch (e) {
+      debugPrint('Ошибка isMockRunning: $e');
+      return false;
+    }
   }
 
   Future<bool> startMock({
@@ -50,14 +65,19 @@ class MockLocationService {
     double altitude = 0.0,
     int intervalMs = 1000,
   }) async {
-    final result = await _channel.invokeMethod<bool>('startMock', {
-      'latitude': latitude,
-      'longitude': longitude,
-      'accuracy': accuracy,
-      'altitude': altitude,
-      'intervalMs': intervalMs,
-    });
-    return result ?? false;
+    try {
+      final result = await _channel.invokeMethod<bool>('startMock', {
+        'latitude': latitude,
+        'longitude': longitude,
+        'accuracy': accuracy,
+        'altitude': altitude,
+        'intervalMs': intervalMs,
+      });
+      return result ?? false;
+    } catch (e) {
+      debugPrint('Ошибка startMock: $e');
+      return false;
+    }
   }
 
   Future<bool> updateMock({
@@ -66,32 +86,48 @@ class MockLocationService {
     double accuracy = 3.0,
     double altitude = 0.0,
   }) async {
-    final result = await _channel.invokeMethod<bool>('updateMock', {
-      'latitude': latitude,
-      'longitude': longitude,
-      'accuracy': accuracy,
-      'altitude': altitude,
-    });
-    return result ?? false;
+    try {
+      final result = await _channel.invokeMethod<bool>('updateMock', {
+        'latitude': latitude,
+        'longitude': longitude,
+        'accuracy': accuracy,
+        'altitude': altitude,
+      });
+      return result ?? false;
+    } catch (e) {
+      debugPrint('Ошибка updateMock: $e');
+      return false;
+    }
   }
 
   Future<bool> stopMock() async {
-    final result = await _channel.invokeMethod<bool>('stopMock');
-    return result ?? false;
+    try {
+      final result = await _channel.invokeMethod<bool>('stopMock');
+      return result ?? false;
+    } catch (e) {
+      debugPrint('Ошибка stopMock: $e');
+      return false;
+    }
   }
 
-  /// Жёсткий сброс mock. Вызывать:
-  /// - при старте приложения,
-  /// - по кнопке "Восстановить GPS",
-  /// - при проблемах с залипшей координатой.
   Future<bool> forceResetMock() async {
-    final result = await _channel.invokeMethod<bool>('forceResetMock');
-    return result ?? false;
+    try {
+      final result = await _channel.invokeMethod<bool>('forceResetMock');
+      return result ?? false;
+    } catch (e) {
+      debugPrint('Ошибка forceResetMock: $e');
+      return false;
+    }
   }
 
   Future<RealLocation?> getRealLocation() async {
-    final raw = await _channel.invokeMethod('getRealLocation');
-    if (raw == null) return null;
-    return RealLocation.fromMap(raw as Map<dynamic, dynamic>);
+    try {
+      final raw = await _channel.invokeMethod('getRealLocation');
+      if (raw == null) return null;
+      return RealLocation.fromMap(raw as Map<dynamic, dynamic>);
+    } catch (e) {
+      debugPrint('Ошибка getRealLocation: $e');
+      return null;
+    }
   }
 }

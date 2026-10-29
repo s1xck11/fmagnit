@@ -3,6 +3,13 @@ import 'package:flutter/services.dart';
 class OverlayService {
   static const MethodChannel _channel =
       MethodChannel('com.s1xck.fmagnit/overlay');
+  static const EventChannel _eventChannel =
+      EventChannel('com.s1xck.fmagnit/overlay_events');
+
+  // Поток для реактивного получения состояния оверлея
+  Stream<Map<dynamic, dynamic>?> get overlayStateStream {
+    return _eventChannel.receiveBroadcastStream().cast<Map<dynamic, dynamic>?>();
+  }
 
   Future<bool> hasOverlayPermission() async {
     final r = await _channel.invokeMethod<bool>('hasOverlayPermission');
@@ -60,21 +67,16 @@ class OverlayService {
     });
   }
 
-  /// Передаёт в оверлей список кодов домофонов (JSON-массив).
-  /// Элемент: {id, code, address, latitude, longitude}
   Future<void> updateDoorCodes({required String codesJson}) async {
     await _channel.invokeMethod('updateDoorCodes', {
       'codesJson': codesJson,
     });
   }
 
-  /// Очищает координаты заказа, полученные из приложения доставки.
   Future<void> clearOrderTarget() async {
     await _channel.invokeMethod('clearOrderTarget');
   }
 
-  /// Тестовый заказ: устанавливает координаты заказа вручную
-  /// (без перехвата из Магнита). Оверлей раскроется автоматически.
   Future<void> setManualOrderTarget({
     required double latitude,
     required double longitude,
