@@ -1,23 +1,51 @@
 package com.s1xck.fmagnit
-import android.app.*
-import android.content.*
-import android.graphics.*
-import android.graphics.drawable.*
-import android.location.*
-import android.os.*
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.PixelFormat
+import android.graphics.Typeface
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.GradientDrawable
+import android.location.Location
+import android.location.LocationManager
+import android.os.Build
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
+import android.os.PowerManager
 import android.text.TextUtils
 import android.util.TypedValue
-import android.view.*
-import android.widget.*
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
+import android.view.WindowManager
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.widget.Toast
 import org.json.JSONArray
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
-import org.osmdroid.views.overlay.*
+import org.osmdroid.views.overlay.Marker
+import org.osmdroid.views.overlay.Polyline
+import org.osmdroid.views.overlay.gestures.RotationGestureOverlay
 import java.io.File
 import java.util.Locale
-import kotlin.math.*
+import kotlin.math.asin
+import kotlin.math.cos
+import kotlin.math.pow
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 const val ACTION_START = "com.s1xck.fmagnit.OVERLAY_START"
 const val ACTION_POINT_START = "com.s1xck.fmagnit.POINT_START"
@@ -59,6 +87,7 @@ class OverlayService : Service() {
         @Volatile var currentActiveId: String? = null
         @Volatile var currentDoorCodesJson: String = "[]"
     }
+
     private var windowManager: WindowManager? = null
     private var headerWindowView: LinearLayout? = null
     private var headerWindowLp: WindowManager.LayoutParams? = null
@@ -82,6 +111,7 @@ class OverlayService : Service() {
     private var routePolyline: Polyline? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
+
     override fun onCreate() {
         super.onCreate()
         try {
@@ -98,6 +128,7 @@ class OverlayService : Service() {
             buildHeaderWindow(); applyVisibility()
         } catch (e: Throwable) { CrashLogger.log(this, "OverlayService_onCreate", e); stopSelf() }
     }
+
     private fun initOsmdroid() {
         try {
             val cfg = Configuration.getInstance(); cfg.userAgentValue = packageName
@@ -107,6 +138,7 @@ class OverlayService : Service() {
             cfg.osmdroidTileCache = tiles
         } catch (e: Exception) { CrashLogger.log(this, "initOsmdroid", e) }
     }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         try {
             when (intent?.action) {
@@ -130,6 +162,7 @@ class OverlayService : Service() {
         } catch (e: Throwable) { CrashLogger.log(this, "OverlayService_onStartCommand", e) }
         return START_STICKY
     }
+
     override fun onDestroy() {
         try {
             OverlayBridge.onOverlayStateChanged {}
@@ -140,6 +173,7 @@ class OverlayService : Service() {
         } catch (e: Throwable) { CrashLogger.log(this, "OverlayService_onDestroy", e) }
         super.onDestroy()
     }
+
     private fun acquireWakeLock() {
         try {
             val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
@@ -147,10 +181,12 @@ class OverlayService : Service() {
             wakeLock?.setReferenceCounted(false); wakeLock?.acquire()
         } catch (e: Exception) { CrashLogger.log(this, "acquireWakeLock", e) }
     }
+
     private fun releaseWakeLock() {
         try { if (wakeLock?.isHeld == true) wakeLock?.release() } catch (e: Exception) { CrashLogger.log(this, "releaseWakeLock", e) }
         wakeLock = null
     }
+
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = getSystemService(NotificationManager::class.java)
@@ -160,6 +196,7 @@ class OverlayService : Service() {
             }
         }
     }
+
     private fun buildNotification(): Notification {
         val openIntent = Intent(this, com.google.android.apps.maps.MapsActivity::class.java).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP }
         val piFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT else PendingIntent.FLAG_UPDATE_CURRENT
@@ -167,6 +204,7 @@ class OverlayService : Service() {
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) Notification.Builder(this, CHANNEL_ID) else @Suppress("DEPRECATION") Notification.Builder(this)
         return builder.setContentTitle("fmagnit").setContentText("Оверлей активен").setSmallIcon(android.R.drawable.ic_menu_mylocation).setContentIntent(pi).setOngoing(true).build()
     }
+
     private fun dp(v: Int): Int = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics).toInt()
     private fun roundedBg(color: Int, radiusDp: Int, strokeColor: Int? = null, strokeWidthDp: Int = 1): GradientDrawable {
         val d = GradientDrawable(); d.shape = GradientDrawable.RECTANGLE; d.cornerRadius = dp(radiusDp).toFloat(); d.setColor(color)
@@ -174,6 +212,7 @@ class OverlayService : Service() {
         return d
     }
     private fun windowType(): Int = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
+
     private fun getCurrentLocation(): Location? {
         try {
             val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return null
@@ -186,6 +225,7 @@ class OverlayService : Service() {
             return best
         } catch (e: Exception) { return null }
     }
+
     private fun buildHeaderWindow() {
         val ctx = this; val screenW = resources.displayMetrics.widthPixels
         val header = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(20), 0, dp(16), 0); background = roundedBg(COLOR_HEADER_BG, 0); setOnClickListener { toggleExpanded() } }
@@ -197,6 +237,7 @@ class OverlayService : Service() {
         try { windowManager?.addView(header, headerWindowLp) } catch (e: Exception) { Toast.makeText(this, "Ошибка оверлея: ${e.message}", Toast.LENGTH_LONG).show() }
         applyDotColor()
     }
+
     private fun showContentWindow() {
         if (contentWindowView != null) { rebuildContent(); return }
         try {
@@ -213,24 +254,29 @@ class OverlayService : Service() {
             windowManager?.addView(wrapper, contentWindowLp); rebuildContent()
         } catch (e: Throwable) { CrashLogger.log(this, "showContentWindow", e) }
     }
+
     private fun removeContentWindow() {
         try { contentWindowView?.let { windowManager?.removeView(it) } } catch (e: Exception) { CrashLogger.log(this, "removeContentWindow", e) }
         contentWindowView = null; contentWindowLp = null; contentContainer = null
     }
+
     private fun toggleExpanded() { expanded = !expanded; if (expanded) showContentWindow() else removeContentWindow() }
     private fun currentActiveNameOrPlaceholder(): String {
         val id = currentActiveId ?: return "не выбрано"
         return parsePoints(currentPointsJson).firstOrNull { it.first == id }?.second ?: "не выбрано"
     }
     private fun applyDotColor() { dotView?.setTextColor(if (isRunning) COLOR_DOT_ACTIVE else COLOR_DOT_IDLE) }
+
     private fun createMapView(): MapView {
         val ctx = this; val map = MapView(ctx)
         try { map.setTileSource(TileSourceFactory.MAPNIK); map.setUseDataConnection(true); map.setMultiTouchControls(true); map.controller.setZoom(17.0); map.invalidate() } catch (e: Exception) { CrashLogger.log(this, "createMapView", e) }
         return map
     }
+
     private fun addOrderMarker(map: MapView, lat: Double, lon: Double) {
         try { val marker = Marker(map).apply { position = GeoPoint(lat, lon); setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM); title = "Заказ" }; map.overlays.add(marker) } catch (e: Exception) { CrashLogger.log(this, "addOrderMarker", e) }
     }
+
     private fun addWaypointMarker(map: MapView, lat: Double, lon: Double, name: String) {
         try {
             val marker = Marker(map).apply { position = GeoPoint(lat, lon); setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM); setOnMarkerClickListener { _, _ -> true } }
@@ -246,6 +292,7 @@ class OverlayService : Service() {
             }
         } catch (e: Exception) { CrashLogger.log(this, "addWaypointMarker", e) }
     }
+
     private fun createMyLocationBitmap(): Bitmap? {
         return try {
             val sizePx = dp(28)
@@ -264,6 +311,7 @@ class OverlayService : Service() {
             innerBmp.recycle(); bmp
         } catch (e: Exception) { CrashLogger.log(this, "createMyLocationBitmap", e); null }
     }
+
     private fun addOrUpdateMyLocationMarker(map: MapView, lat: Double, lon: Double) {
         try {
             if (myLocationMarker == null) {
@@ -272,6 +320,7 @@ class OverlayService : Service() {
             } else { myLocationMarker?.position = GeoPoint(lat, lon) }
         } catch (e: Exception) { CrashLogger.log(this, "addOrUpdateMyLocationMarker", e) }
     }
+
     private fun viewToBitmap(view: View, widthPx: Int, heightPx: Int, exactWidth: Boolean = true): Bitmap? {
         return try {
             val wSpec = if (exactWidth) View.MeasureSpec.makeMeasureSpec(widthPx.coerceAtLeast(1), View.MeasureSpec.EXACTLY) else View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
@@ -284,12 +333,14 @@ class OverlayService : Service() {
             view.draw(Canvas(bmp)); bmp
         } catch (e: Exception) { CrashLogger.log(this, "viewToBitmap", e); null }
     }
+
     private fun distanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
         val r = 6371000.0; val phi1 = Math.toRadians(lat1); val phi2 = Math.toRadians(lat2)
         val dPhi = Math.toRadians(lat2 - lat1); val dLambda = Math.toRadians(lon2 - lon1)
         val a = sin(dPhi / 2).pow(2) + cos(phi1) * cos(phi2) * sin(dLambda / 2).pow(2)
         return 2 * r * asin(sqrt(a))
     }
+
     private fun centerOnMyLocation() {
         try {
             val myLoc = getCurrentLocation()
@@ -298,7 +349,7 @@ class OverlayService : Service() {
             addOrUpdateMyLocationMarker(fullMap!!, myLoc.latitude, myLoc.longitude); fullMap?.invalidate()
         } catch (e: Exception) { CrashLogger.log(this, "centerOnMyLocation", e) }
     }
-    private fun openFullMap(lat: Double, lon: Double) {
+private fun openFullMap(lat: Double, lon: Double) {
         try {
             closeFullMap(); expanded = false; removeContentWindow()
             val ctx = this; fullMap = createMapView()
@@ -322,21 +373,30 @@ class OverlayService : Service() {
                         }
                     }.start()
                 }
-                try { val rotation = RotationGestureOverlay(map).apply { isEnabled = true }; map.overlays.add(rotation) } catch (e: Exception) { CrashLogger.log(this, "openFullMap_rotation", e) }
+                try { 
+                    val rotation = RotationGestureOverlay(map)
+                    rotation.isEnabled = true
+                    map.overlays.add(rotation) 
+                } catch (e: Exception) { CrashLogger.log(this, "openFullMap_rotation", e) }
                 map.controller.setCenter(GeoPoint(lat, lon)); map.controller.setZoom(17.0); map.invalidate()
             }
             val container = FrameLayout(ctx)
             fullMap?.let { container.addView(it, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)) }
-            container.addView(TextView(ctx).apply { text = "×"; setTextColor(COLOR_TEXT); setTextSize(TypedValue.COMPLEX_UNIT_SP, 26f); gravity = Gravity.CENTER; background = roundedBg(COLOR_ACCENT, 22); setPadding(dp(14), dp(4), dp(14), dp(10)); setOnClickListener { closeFullMap() } }, FrameLayout.LayoutParams(dp(44), dp(44)).apply { gravity = Gravity.TOP or Gravity.END; topMargin = dp(12); rightMargin = dp(12) })
+            
+            val closeBtn = TextView(ctx).apply { text = "×"; setTextColor(COLOR_TEXT); setTextSize(TypedValue.COMPLEX_UNIT_SP, 26f); gravity = Gravity.CENTER; background = roundedBg(COLOR_ACCENT, 22); setPadding(dp(14), dp(4), dp(14), dp(10)); setOnClickListener { closeFullMap() } }
+            container.addView(closeBtn, FrameLayout.LayoutParams(dp(44), dp(44)).apply { gravity = Gravity.TOP or Gravity.END; topMargin = dp(12); rightMargin = dp(12) })
+            
             val north = TextView(ctx).apply { text = "N"; setTextColor(COLOR_TEXT); setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f); setTypeface(typeface, Typeface.BOLD); gravity = Gravity.CENTER; background = roundedBg(COLOR_HEADER_BG, 20); setPadding(dp(10), dp(6), dp(10), dp(6)); visibility = View.GONE; setOnClickListener { fullMap?.mapOrientation = 0f; fullMap?.invalidate(); visibility = View.GONE } }
             resetNorthButton = north
             container.addView(north, FrameLayout.LayoutParams(dp(44), dp(44)).apply { gravity = Gravity.TOP or Gravity.START; topMargin = dp(12); leftMargin = dp(12) })
+            
             val meBtn = TextView(ctx).apply { text = "📍"; setTextColor(COLOR_TEXT); setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f); gravity = Gravity.CENTER; background = roundedBg(COLOR_MY_LOCATION, 22, strokeColor = Color.WHITE, strokeWidthDp = 2); setPadding(dp(10), dp(6), dp(10), dp(6)); setOnClickListener { centerOnMyLocation() } }
             centerOnMeButton = meBtn
             container.addView(meBtn, FrameLayout.LayoutParams(dp(52), dp(52)).apply { gravity = Gravity.BOTTOM or Gravity.END; bottomMargin = dp(16); rightMargin = dp(16) })
+            
             val currentOrientationTicker = orientationTicker
             if (currentOrientationTicker != null) { handler.post(currentOrientationTicker) } else {
-                val newTicker = object : Runnable { override fun run() { try { val m = fullMap ?: return; resetNorthButton?.visibility = if (abs(m.mapOrientation) > 1f) View.VISIBLE else View.GONE } catch (e: Exception) { CrashLogger.log(this@OverlayService, "orientationTicker", e) }; handler.postDelayed(this, 300L) } }
+                val newTicker = object : Runnable { override fun run() { try { val m = fullMap ?: return; resetNorthButton?.visibility = if (kotlin.math.abs(m.mapOrientation) > 1f) View.VISIBLE else View.GONE } catch (e: Exception) { CrashLogger.log(this@OverlayService, "orientationTicker", e) }; handler.postDelayed(this, 300L) } }
                 orientationTicker = newTicker; handler.post(newTicker)
             }
             val currentLocationTicker = myLocationTicker
@@ -350,6 +410,7 @@ class OverlayService : Service() {
             windowManager?.addView(wrapper, fullMapLayoutParams); fullMapWrapper = wrapper
         } catch (e: Throwable) { CrashLogger.log(this, "openFullMap", e); closeFullMap() }
     }
+
     private fun closeFullMap() {
         try {
             val ot = orientationTicker; if (ot != null) { handler.removeCallbacks(ot); orientationTicker = null }
@@ -361,6 +422,7 @@ class OverlayService : Service() {
         try { fullMap?.onDetach() } catch (e: Exception) { CrashLogger.log(this, "closeFullMap_onDetach", e) }
         fullMap = null
     }
+
     private fun rebuildContent() {
         try {
             isRunning = try { MockManager.isRunning() } catch (e: Exception) { false }
@@ -392,6 +454,7 @@ class OverlayService : Service() {
             container.addView(restoreBtn)
         } catch (e: Throwable) { CrashLogger.log(this, "rebuildContent", e) }
     }
+
     private fun addOrderBlock(container: LinearLayout, lat: Double, lon: Double) {
         try {
             container.addView(TextView(this).apply { text = "Заказ клиента"; setTextColor(COLOR_ACCENT); setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f); setTypeface(typeface, Typeface.BOLD); setPadding(0, dp(4), 0, dp(4)) })
@@ -403,14 +466,23 @@ class OverlayService : Service() {
                 container.addView(TextView(this).apply { text = "По прямой: ~$distText"; setTextColor(COLOR_DOOR_OK); setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f); setTypeface(typeface, Typeface.BOLD); setPadding(0, dp(4), 0, dp(10)) })
             }
             val brouterBtnText = if (RouteService.isBRouterInstalled(this)) "🗺️ Открыть маршрут в BRouter" else "📥 Скачать BRouter для маршрутов"
-            container.addView(TextView(this).apply { text = brouterBtnText; setTextColor(COLOR_TEXT); setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f); setTypeface(typeface, Typeface.BOLD); gravity = Gravity.CENTER; setPadding(dp(16), dp(10), dp(16), dp(10)); background = roundedBg(COLOR_INACTIVE, 12); setOnClickListener { val intent = RouteService.getBRouterIntent(this@OverlayService); intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK; startActivity(intent) }; layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).also { it.bottomMargin = dp(8) } })
-            container.addView(TextView(this).apply { text = "ОТКРЫТЬ КАРТУ"; setTextColor(COLOR_TEXT); setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f); setTypeface(typeface, Typeface.BOLD); gravity = Gravity.CENTER; setPadding(dp(16), dp(12), dp(16), dp(12)); background = roundedBg(COLOR_INACTIVE, 12); setOnClickListener { openFullMap(lat, lon) }; layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).also { it.bottomMargin = dp(8) } })
+            val brouterBtn = TextView(this).apply { text = brouterBtnText; setTextColor(COLOR_TEXT); setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f); setTypeface(typeface, Typeface.BOLD); gravity = Gravity.CENTER; setPadding(dp(16), dp(10), dp(16), dp(10)); background = roundedBg(COLOR_INACTIVE, 12); setOnClickListener { val intent = RouteService.getBRouterIntent(this@OverlayService); intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK; startActivity(intent) } }
+            container.addView(brouterBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).also { it.bottomMargin = dp(8) })
+            
+            val openMapBtn = TextView(this).apply { text = "ОТКРЫТЬ КАРТУ"; setTextColor(COLOR_TEXT); setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f); setTypeface(typeface, Typeface.BOLD); gravity = Gravity.CENTER; setPadding(dp(16), dp(12), dp(16), dp(12)); background = roundedBg(COLOR_INACTIVE, 12); setOnClickListener { openFullMap(lat, lon) } }
+            container.addView(openMapBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).also { it.bottomMargin = dp(8) })
+            
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-            val goBtn = TextView(this).apply { text = "ПЕРЕЙТИ"; setTextColor(COLOR_TEXT); setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f); setTypeface(typeface, Typeface.BOLD); gravity = Gravity.CENTER; setPadding(dp(14), dp(12), dp(14), dp(12)); background = roundedBg(COLOR_ACCENT, 12); setOnClickListener { try { isRunning = MockManager.start(this@OverlayService, lat, lon, 5.0, 0.0, 1000L); OverlayPrefs.saveRunning(this@OverlayService, isRunning); rebuildContent() } catch (e: Exception) { CrashLogger.log(this, "addOrderBlock_goBtn", e) } }; layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).also { it.rightMargin = dp(6) } }
-            val closeBtn = TextView(this).apply { text = "ЗАКРЫТЬ"; setTextColor(COLOR_TEXT); setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f); setTypeface(typeface, Typeface.BOLD); gravity = Gravity.CENTER; setPadding(dp(14), dp(12), dp(14), dp(12)); background = roundedBg(COLOR_INACTIVE, 12); setOnClickListener { OrderTargetStore.clear(this@OverlayService); expanded = false; removeContentWindow() }; layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).also { it.leftMargin = dp(6) } }
+            val goBtn = TextView(this).apply { text = "ПЕРЕЙТИ"; setTextColor(COLOR_TEXT); setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f); setTypeface(typeface, Typeface.BOLD); gravity = Gravity.CENTER; setPadding(dp(14), dp(12), dp(14), dp(12)); background = roundedBg(COLOR_ACCENT, 12); setOnClickListener { try { isRunning = MockManager.start(this@OverlayService, lat, lon, 5.0, 0.0, 1000L); OverlayPrefs.saveRunning(this@OverlayService, isRunning); rebuildContent() } catch (e: Exception) { CrashLogger.log(this, "addOrderBlock_goBtn", e) } } }
+            goBtn.layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).also { it.rightMargin = dp(6) }
+            
+            val closeBtn = TextView(this).apply { text = "ЗАКРЫТЬ"; setTextColor(COLOR_TEXT); setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f); setTypeface(typeface, Typeface.BOLD); gravity = Gravity.CENTER; setPadding(dp(14), dp(12), dp(14), dp(12)); background = roundedBg(COLOR_INACTIVE, 12); setOnClickListener { OrderTargetStore.clear(this@OverlayService); expanded = false; removeContentWindow() } }
+            closeBtn.layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).also { it.leftMargin = dp(6) }
+            
             row.addView(goBtn); row.addView(closeBtn); container.addView(row)
         } catch (e: Exception) { CrashLogger.log(this, "addOrderBlock", e) }
     }
+
     private fun parsePointsFull(json: String): List<Quadruple> {
         return try { val arr = JSONArray(json); val out = ArrayList<Quadruple>(arr.length()); for (i in 0 until arr.length()) { val obj = arr.getJSONObject(i); val id = obj.optString("id", ""); if (id.isEmpty()) continue; out.add(Quadruple(id, obj.optDouble("latitude", 0.0), obj.optDouble("longitude", 0.0), obj.optDouble("accuracy", 3.0))) }; out } catch (e: Exception) { CrashLogger.log(this, "parsePointsFull", e); emptyList() }
     }
