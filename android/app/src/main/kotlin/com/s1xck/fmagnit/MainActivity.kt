@@ -1,4 +1,5 @@
 package com.s1xck.fmagnit
+
 import android.content.Intent
 import android.os.Build
 import android.os.Handler
