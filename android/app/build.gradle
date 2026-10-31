@@ -63,6 +63,6 @@ flutter {
 }
 
 dependencies {
-    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.7.10"
+    // Только OSMDroid. Kotlin stdlib подтянется автоматически из Flutter, что исключит дубликаты.
     implementation "org.osmdroid:osmdroid-android:6.1.18"
 }
