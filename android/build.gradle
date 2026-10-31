@@ -15,6 +15,14 @@ allprojects {
         google()
         mavenCentral()
     }
+    // Жёстко фиксируем версию Kotlin, чтобы убрать дубликаты классов
+    configurations.all {
+        resolutionStrategy {
+            force "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
+            force "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
+            force "org.jetbrains.kotlin:kotlin-stdlib-jdk8:$kotlin_version"
+        }
+    }
 }
 
 rootProject.buildDir = "../build"
