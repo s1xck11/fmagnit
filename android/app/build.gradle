@@ -6,44 +6,36 @@ plugins {
 
 android {
     namespace "com.s1xck.fmagnit"
-    compileSdk 34
+    compileSdk flutter.compileSdkVersion
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
+
+    sourceSets {
+        main.java.srcDirs += 'src/main/kotlin'
+    }
 
     defaultConfig {
         applicationId "com.s1xck.fmagnit"
-        minSdk 24
-        targetSdk 34
-        versionCode 1
-        versionName "0.1.0"
+        minSdk flutter.minSdkVersion
+        targetSdk flutter.targetSdkVersion
+        versionCode flutter.versionCode
+        versionName flutter.versionName
     }
 
     buildTypes {
         release {
-            // В продакшене здесь должен быть твой release signingConfig
             signingConfig signingConfigs.debug
-
-            // Включаем сжатие кода (обязательно для shrinkResources)
             minifyEnabled true
-
-            // Включаем сжатие ресурсов (уменьшает размер APK)
             shrinkResources true
-
-            // Файл правил для ProGuard/R8 (чтобы не вырезать нужные классы BRouter и OSMDroid)
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
-    }
-
-    compileOptions {
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
-    }
-
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
-    packagingOptions {
-        // BRouter тянет много нативных библиотек, исключаем дубликаты
-        pickFirst '**/libc++_shared.so'
     }
 }
 
@@ -52,11 +44,6 @@ flutter {
 }
 
 dependencies {
-    implementation "org.jetbrains.kotlin:kotlin-stdlib:1.9.22"
-    implementation "androidx.core:core-ktx:1.12.0"
-
-    // BRouter через JitPack
-    implementation "com.github.abrensch:brouter:1.7.5"
-
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.7.10"
     implementation "org.osmdroid:osmdroid-android:6.1.18"
 }
