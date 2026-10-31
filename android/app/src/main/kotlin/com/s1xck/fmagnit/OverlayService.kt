@@ -1,51 +1,24 @@
 package com.s1xck.fmagnit
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
-import android.app.Service
-import android.content.Context
-import android.content.Intent
-import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.PixelFormat
-import android.graphics.Typeface
-import android.graphics.drawable.BitmapDrawable
-import android.graphics.drawable.GradientDrawable
-import android.location.Location
-import android.location.LocationManager
-import android.os.Build
-import android.os.Handler
-import android.os.IBinder
-import android.os.Looper
-import android.os.PowerManager
+import android.app.*
+import android.content.*
+import android.graphics.*
+import android.graphics.drawable.*
+import android.location.*
+import android.os.*
 import android.text.TextUtils
 import android.util.TypedValue
-import android.view.Gravity
-import android.view.View
-import android.view.ViewGroup
-import android.view.WindowManager
-import android.widget.FrameLayout
-import android.widget.LinearLayout
-import android.widget.TextView
-import android.widget.Toast
+import android.view.*
+import android.widget.*
 import org.json.JSONArray
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
-import org.osmdroid.views.overlay.Marker
-import org.osmdroid.views.overlay.Polyline
-import org.osmdroid.views.overlay.gestures.RotationGestureOverlay
+import org.osmdroid.views.overlay.*
 import java.io.File
 import java.util.Locale
-import kotlin.math.asin
-import kotlin.math.cos
-import kotlin.math.pow
-import kotlin.math.sin
-import kotlin.math.sqrt
+import kotlin.math.*
 
 const val ACTION_START = "com.s1xck.fmagnit.OVERLAY_START"
 const val ACTION_POINT_START = "com.s1xck.fmagnit.POINT_START"
@@ -349,7 +322,8 @@ class OverlayService : Service() {
             addOrUpdateMyLocationMarker(fullMap!!, myLoc.latitude, myLoc.longitude); fullMap?.invalidate()
         } catch (e: Exception) { CrashLogger.log(this, "centerOnMyLocation", e) }
     }
-private fun openFullMap(lat: Double, lon: Double) {
+
+    private fun openFullMap(lat: Double, lon: Double) {
         try {
             closeFullMap(); expanded = false; removeContentWindow()
             val ctx = this; fullMap = createMapView()
@@ -396,7 +370,7 @@ private fun openFullMap(lat: Double, lon: Double) {
             
             val currentOrientationTicker = orientationTicker
             if (currentOrientationTicker != null) { handler.post(currentOrientationTicker) } else {
-                val newTicker = object : Runnable { override fun run() { try { val m = fullMap ?: return; resetNorthButton?.visibility = if (kotlin.math.abs(m.mapOrientation) > 1f) View.VISIBLE else View.GONE } catch (e: Exception) { CrashLogger.log(this@OverlayService, "orientationTicker", e) }; handler.postDelayed(this, 300L) } }
+                val newTicker = object : Runnable { override fun run() { try { val m = fullMap ?: return; resetNorthButton?.visibility = if (abs(m.mapOrientation) > 1f) View.VISIBLE else View.GONE } catch (e: Exception) { CrashLogger.log(this@OverlayService, "orientationTicker", e) }; handler.postDelayed(this, 300L) } }
                 orientationTicker = newTicker; handler.post(newTicker)
             }
             val currentLocationTicker = myLocationTicker
