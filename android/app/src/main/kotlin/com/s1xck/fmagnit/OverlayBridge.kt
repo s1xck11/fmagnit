@@ -3,13 +3,12 @@ package com.s1xck.fmagnit
 object OverlayBridge {
     const val TARGET_PACKAGE = "com.magnit.delivery.courier"
 
-    // По умолчанию скрыто. Показываем только когда детектор подтвердит Магнит.
     @Volatile
     var isTargetAppForeground: Boolean = false
         private set
 
     @Volatile
-    var isOverlayServiceRunning: Boolean = false
+    var isOverlayRunning: Boolean = false
 
     private var overlayListener: (() -> Unit)? = null
 
@@ -20,7 +19,7 @@ object OverlayBridge {
     }
 
     fun setOverlayRunning(value: Boolean) {
-        isOverlayServiceRunning = value
+        isOverlayRunning = value
     }
 
     fun onOverlayStateChanged(listener: () -> Unit) {
