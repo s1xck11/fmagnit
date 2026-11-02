@@ -5,15 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../main.dart';
-import '../models/door_code.dart';
 import '../models/waypoint.dart';
 import '../services/mock_location_service.dart';
 import '../services/order_target_service.dart';
 import '../services/overlay_service.dart';
-import '../storage/door_code_storage.dart';
 import '../storage/waypoint_storage.dart';
 import 'address_search_dialog.dart';
-import 'door_codes_page.dart';
 import 'health_page.dart';
 import 'import_export_dialogs.dart';
 import 'map_download_page.dart';
@@ -28,7 +25,6 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final _storage = WaypointStorage();
-  final _doorStorage = DoorCodeStorage();
   final _overlay = OverlayService();
   final _mock = MockLocationService();
   final _orderTarget = OrderTargetService();
@@ -136,7 +132,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _loading = false;
     });
     await _pushPointsToOverlay();
-    await _pushDoorCodesToOverlay();
   }
 
   Future<void> _refreshPermissions() async {
@@ -164,18 +159,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     await _overlay.updatePoints(pointsJson: json, activeId: _activeId);
   }
 
-  Future<void> _pushDoorCodesToOverlay() async {
-    final codes = await _doorStorage.loadAll();
-    final json = jsonEncode(codes.map((c) => {
-          'id': c.id,
-          'code': c.code,
-          'address': c.address,
-          'latitude': c.latitude,
-          'longitude': c.longitude,
-        }).toList());
-    await _overlay.updateDoorCodes(codesJson: json);
-  }
-
   Future<void> _toggleOverlay() async {
     if (!_overlayPerm) {
       await _overlay.requestOverlayPermission();
@@ -195,7 +178,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       await _overlay.startOverlay();
       await Future.delayed(const Duration(milliseconds: 400));
       await _pushPointsToOverlay();
-      await _pushDoorCodesToOverlay();
     }
     await Future.delayed(const Duration(milliseconds: 600));
     await _refreshPermissions();
@@ -212,13 +194,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     await Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const MapDownloadPage()),
     );
-  }
-
-  Future<void> _openDoorCodes() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const DoorCodesPage()),
-    );
-    await _pushDoorCodesToOverlay();
   }
 
   Future<void> _restoreGps() async {
@@ -272,12 +247,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               ),
             ),
             ListTile(
-              leading: const Icon(Icons.my_location, color: FMagnitTheme.accent),
+              leading: const Icon(Icons.my_location,
+                  color: FMagnitTheme.accent),
               title: const Text('Сохранить мою позицию'),
               onTap: () => Navigator.of(context).pop('current'),
             ),
             ListTile(
-              leading: const Icon(Icons.edit_location_alt, color: FMagnitTheme.accent),
+              leading: const Icon(Icons.edit_location_alt,
+                  color: FMagnitTheme.accent),
               title: const Text('Ввести координаты вручную'),
               onTap: () => Navigator.of(context).pop('manual'),
             ),
@@ -302,13 +279,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Future<void> _addWaypoint() async {
-    final existingGroups = _waypoints.map((w) => w.group).where((g) => g.isNotEmpty).toSet().toList();
+    final existingGroups = _waypoints
+        .map((w) => w.group)
+        .where((g) => g.isNotEmpty)
+        .toSet()
+        .toList();
+
     final result = await showDialog<Waypoint>(
       context: context,
       builder: (_) => _WaypointDialog(groups: existingGroups),
     );
     if (result == null) return;
-    await _storage.upsert(result); // ПРАВИЛЬНЫЙ МЕТОД
+    await _storage.upsert(result);
     await _load();
   }
 
@@ -329,11 +311,17 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (!mounted) return;
 
     if (real == null) {
-      _snack('Не удалось получить реальную локацию. Выйди на улицу или открой Google Maps, чтобы GPS прогрелся.');
+      _snack('Не удалось получить реальную локацию. '
+          'Выйди на улицу или открой Google Maps, чтобы GPS прогрелся.');
       return;
     }
 
-    final existingGroups = _waypoints.map((w) => w.group).where((g) => g.isNotEmpty).toSet().toList();
+    final existingGroups = _waypoints
+        .map((w) => w.group)
+        .where((g) => g.isNotEmpty)
+        .toSet()
+        .toList();
+
     final result = await showDialog<Waypoint>(
       context: context,
       builder: (_) => _WaypointDialog(
@@ -341,11 +329,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         presetLat: real.latitude,
         presetLon: real.longitude,
         presetAcc: real.accuracy,
-        infoLine: 'Точность ${real.accuracy.toStringAsFixed(0)} м, получено ${_humanAge(real.age)} назад',
+        infoLine: 'Точность ${real.accuracy.toStringAsFixed(0)} м, '
+            'получено ${_humanAge(real.age)} назад',
       ),
     );
     if (result == null) return;
-    await _storage.upsert(result); // ПРАВИЛЬНЫЙ МЕТОД
+    await _storage.upsert(result);
     await _load();
   }
 
@@ -354,13 +343,21 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (result == null) return;
     if (!mounted) return;
 
-    final existingGroups = _waypoints.map((w) => w.group).where((g) => g.isNotEmpty).toSet().toList();
+    final existingGroups = _waypoints
+        .map((w) => w.group)
+        .where((g) => g.isNotEmpty)
+        .toSet()
+        .toList();
+
     final edited = await showDialog<Waypoint>(
       context: context,
-      builder: (_) => _WaypointDialog(initial: result, groups: existingGroups),
+      builder: (_) => _WaypointDialog(
+        initial: result,
+        groups: existingGroups,
+      ),
     );
     if (edited == null) return;
-    await _storage.upsert(edited); // ПРАВИЛЬНЫЙ МЕТОД
+    await _storage.upsert(edited);
     await _load();
   }
 
@@ -372,13 +369,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Future<void> _editWaypoint(Waypoint w) async {
-    final existingGroups = _waypoints.map((e) => e.group).where((g) => g.isNotEmpty).toSet().toList();
+    final existingGroups = _waypoints
+        .map((e) => e.group)
+        .where((g) => g.isNotEmpty)
+        .toSet()
+        .toList();
+
     final result = await showDialog<Waypoint>(
       context: context,
       builder: (_) => _WaypointDialog(initial: w, groups: existingGroups),
     );
     if (result == null) return;
-    await _storage.upsert(result); // ПРАВИЛЬНЫЙ МЕТОД
+    await _storage.upsert(result);
     await _load();
   }
 
@@ -427,7 +429,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   void _snack(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg)),
+    );
   }
 
   List<Waypoint> _sortedFlat(List<Waypoint> src) {
@@ -437,10 +441,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         list.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
         break;
       case SortMode.byName:
-        list.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        list.sort((a, b) =>
+            a.name.toLowerCase().compareTo(b.name.toLowerCase()));
         break;
       case SortMode.byGroup:
-        list.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        list.sort(
+            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
         break;
     }
     return list;
@@ -453,7 +459,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       map.putIfAbsent(g, () => []).add(w);
     }
     for (final entry in map.entries) {
-      entry.value.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      entry.value.sort(
+        (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+      );
     }
     final keys = map.keys.toList()
       ..sort((a, b) {
@@ -473,21 +481,33 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           borderRadius: BorderRadius.circular(16),
         ),
         child: ListTile(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
           title: Text(
             w.name,
-            style: const TextStyle(color: FMagnitTheme.textPrimary, fontWeight: FontWeight.w600, fontSize: 15),
+            style: const TextStyle(
+              color: FMagnitTheme.textPrimary,
+              fontWeight: FontWeight.w600,
+              fontSize: 15,
+            ),
           ),
           subtitle: Padding(
             padding: const EdgeInsets.only(top: 4),
             child: Text(
-              '${w.latitude.toStringAsFixed(6)}, ${w.longitude.toStringAsFixed(6)}${w.group.isNotEmpty ? '  •  ${w.group}' : ''}',
-              style: const TextStyle(color: FMagnitTheme.textMuted, fontSize: 12),
+              '${w.latitude.toStringAsFixed(6)}, '
+              '${w.longitude.toStringAsFixed(6)}'
+              '${w.group.isNotEmpty ? '  •  ${w.group}' : ''}',
+              style: const TextStyle(
+                color: FMagnitTheme.textMuted,
+                fontSize: 12,
+              ),
             ),
           ),
           onTap: () => _editWaypoint(w),
           trailing: IconButton(
-            icon: const Icon(Icons.delete_outline, color: FMagnitTheme.textMuted),
+            icon: const Icon(Icons.delete_outline,
+                color: FMagnitTheme.textMuted),
             onPressed: () => _deleteWaypoint(w),
           ),
         ),
@@ -517,15 +537,24 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               });
             },
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
               child: Row(
                 children: [
-                  Icon(collapsed ? Icons.chevron_right : Icons.expand_more, size: 20, color: FMagnitTheme.accent),
+                  Icon(
+                    collapsed ? Icons.chevron_right : Icons.expand_more,
+                    size: 20,
+                    color: FMagnitTheme.accent,
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       '$name (${items.length})',
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: FMagnitTheme.textPrimary),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
+                        color: FMagnitTheme.textPrimary,
+                      ),
                     ),
                   ),
                 ],
@@ -540,7 +569,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         }
       }
     }
-    return ListView(padding: const EdgeInsets.only(bottom: 100), children: children);
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 100),
+      children: children,
+    );
   }
 
   Widget _buildFlatList() {
@@ -574,21 +606,34 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           children: [
             _statusDot(_overlayPerm),
             const SizedBox(width: 6),
-            const Text('Overlay', style: TextStyle(color: FMagnitTheme.textMuted, fontSize: 11)),
+            const Text('Overlay',
+                style: TextStyle(
+                    color: FMagnitTheme.textMuted, fontSize: 11)),
             const SizedBox(width: 12),
             _statusDot(_usagePerm),
             const SizedBox(width: 6),
-            const Text('Usage', style: TextStyle(color: FMagnitTheme.textMuted, fontSize: 11)),
+            const Text('Usage',
+                style: TextStyle(
+                    color: FMagnitTheme.textMuted, fontSize: 11)),
             const SizedBox(width: 12),
             _statusDot(_accessPerm),
             const SizedBox(width: 6),
-            const Text('Accessibility', style: TextStyle(color: FMagnitTheme.textMuted, fontSize: 11)),
+            const Text('Accessibility',
+                style: TextStyle(
+                    color: FMagnitTheme.textMuted, fontSize: 11)),
             const Spacer(),
             Text(
               ok ? 'OK' : 'Нажми сюда',
-              style: TextStyle(color: ok ? FMagnitTheme.success : FMagnitTheme.accent, fontSize: 11, fontWeight: FontWeight.bold),
+              style: TextStyle(
+                color: ok
+                    ? FMagnitTheme.success
+                    : FMagnitTheme.accent,
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+              ),
             ),
-            const Icon(Icons.chevron_right, color: FMagnitTheme.textMuted, size: 16),
+            const Icon(Icons.chevron_right,
+                color: FMagnitTheme.textMuted, size: 16),
           ],
         ),
       ),
@@ -602,7 +647,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final lat = t.latitude!.toStringAsFixed(6);
     final lon = t.longitude!.toStringAsFixed(6);
     final dt = t.receivedAt;
-    final time = '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}:${dt.second.toString().padLeft(2, '0')}';
+    final time =
+        '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}:${dt.second.toString().padLeft(2, '0')}';
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
@@ -621,9 +667,22 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Последний перехват', style: TextStyle(color: FMagnitTheme.textPrimary, fontWeight: FontWeight.bold, fontSize: 13)),
+                  const Text(
+                    'Последний перехват',
+                    style: TextStyle(
+                      color: FMagnitTheme.textPrimary,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                    ),
+                  ),
                   const SizedBox(height: 4),
-                  Text('$lat, $lon   •   $time', style: const TextStyle(color: FMagnitTheme.textMuted, fontSize: 12)),
+                  Text(
+                    '$lat, $lon   •   $time',
+                    style: const TextStyle(
+                      color: FMagnitTheme.textMuted,
+                      fontSize: 12,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -661,14 +720,23 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 const Icon(Icons.bug_report, color: FMagnitTheme.accent),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Text('Краш [${c.tag ?? "?"}]', style: const TextStyle(color: FMagnitTheme.textPrimary, fontWeight: FontWeight.bold, fontSize: 13)),
+                  child: Text(
+                    'Краш [${c.tag ?? "?"}]',
+                    style: const TextStyle(
+                      color: FMagnitTheme.textPrimary,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                    ),
+                  ),
                 ),
                 IconButton(
                   icon: const Icon(Icons.copy, color: FMagnitTheme.textMuted),
                   onPressed: () async {
                     await Clipboard.setData(ClipboardData(text: c.log));
                     if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Лог скопирован')));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Лог скопирован')),
+                      );
                     }
                   },
                 ),
@@ -685,7 +753,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             SizedBox(
               height: 120,
               child: SingleChildScrollView(
-                child: Text(c.log, style: const TextStyle(color: FMagnitTheme.textPrimary, fontSize: 10, fontFamily: 'monospace')),
+                child: Text(
+                  c.log,
+                  style: const TextStyle(
+                    color: FMagnitTheme.textPrimary,
+                    fontSize: 10,
+                    fontFamily: 'monospace',
+                  ),
+                ),
               ),
             ),
           ],
@@ -701,49 +776,148 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       appBar: AppBar(
         title: const Text('fmagnit'),
         actions: [
-          IconButton(onPressed: _chooseSort, icon: Icon(_sortMode.icon), tooltip: 'Сортировка: ${_sortMode.label}'),
-          IconButton(onPressed: _searchByAddress, icon: const Icon(Icons.search), tooltip: 'Поиск адреса'),
+          IconButton(
+            onPressed: _chooseSort,
+            icon: Icon(_sortMode.icon),
+            tooltip: 'Сортировка: ${_sortMode.label}',
+          ),
+          IconButton(
+            onPressed: _searchByAddress,
+            icon: const Icon(Icons.search),
+            tooltip: 'Поиск адреса',
+          ),
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert),
             tooltip: 'Ещё',
             onSelected: (v) {
               switch (v) {
-                case 'test_order': _testOrder(); break;
-                case 'door_codes': _openDoorCodes(); break;
-                case 'map_download': _openMapDownload(); break;
-                case 'restore_gps': _restoreGps(); break;
-                case 'refresh_target': _refreshOrderTarget(); break;
-                case 'refresh_crash': _refreshCrashLog(); break;
-                case 'settings': _openHealth(); break;
-                case 'import': _importPoints(); break;
-                case 'export': _exportPoints(); break;
+                case 'test_order':
+                  _testOrder();
+                  break;
+                case 'map_download':
+                  _openMapDownload();
+                  break;
+                case 'restore_gps':
+                  _restoreGps();
+                  break;
+                case 'refresh_target':
+                  _refreshOrderTarget();
+                  break;
+                case 'refresh_crash':
+                  _refreshCrashLog();
+                  break;
+                case 'settings':
+                  _openHealth();
+                  break;
+                case 'import':
+                  _importPoints();
+                  break;
+                case 'export':
+                  _exportPoints();
+                  break;
               }
             },
             itemBuilder: (_) => const [
-              PopupMenuItem(value: 'test_order', child: Row(children: [Icon(Icons.assignment_turned_in_outlined, size: 20), SizedBox(width: 12), Text('Тестовый заказ')])),
-              PopupMenuItem(value: 'door_codes', child: Row(children: [Icon(Icons.vpn_key_outlined, size: 20), SizedBox(width: 12), Text('Коды домофонов')])),
-              PopupMenuItem(value: 'map_download', child: Row(children: [Icon(Icons.download_for_offline_outlined, size: 20), SizedBox(width: 12), Text('Загрузка карт')])),
+              PopupMenuItem(
+                value: 'test_order',
+                child: Row(
+                  children: [
+                    Icon(Icons.assignment_turned_in_outlined, size: 20),
+                    SizedBox(width: 12),
+                    Text('Тестовый заказ'),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'map_download',
+                child: Row(
+                  children: [
+                    Icon(Icons.download_for_offline_outlined, size: 20),
+                    SizedBox(width: 12),
+                    Text('Загрузка карт'),
+                  ],
+                ),
+              ),
               PopupMenuDivider(),
-              PopupMenuItem(value: 'restore_gps', child: Row(children: [Icon(Icons.gps_fixed, size: 20), SizedBox(width: 12), Text('Восстановить GPS')])),
-              PopupMenuItem(value: 'refresh_target', child: Row(children: [Icon(Icons.refresh, size: 20), SizedBox(width: 12), Text('Обновить перехват')])),
-              PopupMenuItem(value: 'refresh_crash', child: Row(children: [Icon(Icons.bug_report, size: 20), SizedBox(width: 12), Text('Обновить лог краша')])),
+              PopupMenuItem(
+                value: 'restore_gps',
+                child: Row(
+                  children: [
+                    Icon(Icons.gps_fixed, size: 20),
+                    SizedBox(width: 12),
+                    Text('Восстановить GPS'),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'refresh_target',
+                child: Row(
+                  children: [
+                    Icon(Icons.refresh, size: 20),
+                    SizedBox(width: 12),
+                    Text('Обновить перехват'),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'refresh_crash',
+                child: Row(
+                  children: [
+                    Icon(Icons.bug_report, size: 20),
+                    SizedBox(width: 12),
+                    Text('Обновить лог краша'),
+                  ],
+                ),
+              ),
               PopupMenuDivider(),
-              PopupMenuItem(value: 'settings', child: Row(children: [Icon(Icons.health_and_safety, size: 20), SizedBox(width: 12), Text('Настройки сервисов')])),
+              PopupMenuItem(
+                value: 'settings',
+                child: Row(
+                  children: [
+                    Icon(Icons.health_and_safety, size: 20),
+                    SizedBox(width: 12),
+                    Text('Настройки сервисов'),
+                  ],
+                ),
+              ),
               PopupMenuDivider(),
-              PopupMenuItem(value: 'import', child: Row(children: [Icon(Icons.file_download_outlined, size: 20), SizedBox(width: 12), Text('Импорт точек')])),
-              PopupMenuItem(value: 'export', child: Row(children: [Icon(Icons.file_upload_outlined, size: 20), SizedBox(width: 12), Text('Экспорт точек')])),
+              PopupMenuItem(
+                value: 'import',
+                child: Row(
+                  children: [
+                    Icon(Icons.file_download_outlined, size: 20),
+                    SizedBox(width: 12),
+                    Text('Импорт'),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'export',
+                child: Row(
+                  children: [
+                    Icon(Icons.file_upload_outlined, size: 20),
+                    SizedBox(width: 12),
+                    Text('Экспорт'),
+                  ],
+                ),
+              ),
             ],
           ),
         ],
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator(color: FMagnitTheme.accent))
+          ? const Center(
+              child: CircularProgressIndicator(color: FMagnitTheme.accent),
+            )
           : Column(
               children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
                   child: Container(
-                    decoration: BoxDecoration(color: FMagnitTheme.card, borderRadius: BorderRadius.circular(16)),
+                    decoration: BoxDecoration(
+                      color: FMagnitTheme.card,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
                     padding: const EdgeInsets.all(14),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -751,12 +925,27 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                         FilledButton.icon(
                           onPressed: _toggleOverlay,
                           style: FilledButton.styleFrom(
-                            backgroundColor: _overlayRunning ? FMagnitTheme.accent : FMagnitTheme.inactive,
-                            foregroundColor: _overlayRunning ? Colors.white : FMagnitTheme.textMuted,
+                            backgroundColor: _overlayRunning
+                                ? FMagnitTheme.accent
+                                : FMagnitTheme.inactive,
+                            foregroundColor: _overlayRunning
+                                ? Colors.white
+                                : FMagnitTheme.textMuted,
                             minimumSize: const Size.fromHeight(52),
                           ),
-                          icon: Icon(_overlayRunning ? Icons.stop : Icons.play_arrow, size: 22),
-                          label: Text(_overlayRunning ? 'Остановить оверлей' : 'Запустить оверлей', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                          icon: Icon(
+                            _overlayRunning ? Icons.stop : Icons.play_arrow,
+                            size: 22,
+                          ),
+                          label: Text(
+                            _overlayRunning
+                                ? 'Остановить оверлей'
+                                : 'Запустить оверлей',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
                         ),
                         const SizedBox(height: 6),
                         _statusRow(),
@@ -770,26 +959,55 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
                   child: Row(
                     children: [
-                      const Text('Точки', style: TextStyle(color: FMagnitTheme.textPrimary, fontWeight: FontWeight.bold, fontSize: 16)),
+                      const Text(
+                        'Точки',
+                        style: TextStyle(
+                          color: FMagnitTheme.textPrimary,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
                       const Spacer(),
-                      Text('${_waypoints.length}', style: const TextStyle(color: FMagnitTheme.textMuted, fontSize: 14)),
+                      Text(
+                        '${_waypoints.length}',
+                        style: const TextStyle(
+                          color: FMagnitTheme.textMuted,
+                          fontSize: 14,
+                        ),
+                      ),
                     ],
                   ),
                 ),
                 Expanded(
                   child: _waypoints.isEmpty
-                      ? const Center(child: Text('Пока нет точек.\nНажми + чтобы добавить.', textAlign: TextAlign.center, style: TextStyle(color: FMagnitTheme.textMuted, fontSize: 15)))
-                      : (_sortMode == SortMode.byGroup ? _buildGroupedList() : _buildFlatList()),
+                      ? const Center(
+                          child: Text(
+                            'Пока нет точек.\nНажми + чтобы добавить.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: FMagnitTheme.textMuted,
+                              fontSize: 15,
+                            ),
+                          ),
+                        )
+                      : (_sortMode == SortMode.byGroup
+                          ? _buildGroupedList()
+                          : _buildFlatList()),
                 ),
               ],
             ),
-      floatingActionButton: FloatingActionButton(onPressed: _showAddSheet, tooltip: 'Добавить точку', child: const Icon(Icons.add)),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _showAddSheet,
+        tooltip: 'Добавить точку',
+        child: const Icon(Icons.add),
+      ),
     );
   }
 }
 
 class _PickWaypointDialog extends StatelessWidget {
   final List<Waypoint> waypoints;
+
   const _PickWaypointDialog({required this.waypoints});
 
   @override
@@ -806,13 +1024,23 @@ class _PickWaypointDialog extends StatelessWidget {
             return ListTile(
               dense: true,
               title: Text(w.name),
-              subtitle: Text('${w.latitude.toStringAsFixed(6)}, ${w.longitude.toStringAsFixed(6)}${w.group.isNotEmpty ? '  •  ${w.group}' : ''}', style: const TextStyle(fontSize: 11)),
+              subtitle: Text(
+                '${w.latitude.toStringAsFixed(6)}, '
+                '${w.longitude.toStringAsFixed(6)}'
+                '${w.group.isNotEmpty ? '  •  ${w.group}' : ''}',
+                style: const TextStyle(fontSize: 11),
+              ),
               onTap: () => Navigator.of(context).pop(w),
             );
           },
         ),
       ),
-      actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Отмена'))],
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Отмена'),
+        ),
+      ],
     );
   }
 }
@@ -825,7 +1053,14 @@ class _WaypointDialog extends StatefulWidget {
   final String? infoLine;
   final List<String> groups;
 
-  const _WaypointDialog({this.initial, this.presetLat, this.presetLon, this.presetAcc, this.infoLine, this.groups = const []});
+  const _WaypointDialog({
+    this.initial,
+    this.presetLat,
+    this.presetLon,
+    this.presetAcc,
+    this.infoLine,
+    this.groups = const [],
+  });
 
   @override
   State<_WaypointDialog> createState() => _WaypointDialogState();
@@ -844,9 +1079,15 @@ class _WaypointDialogState extends State<_WaypointDialog> {
     final w = widget.initial;
     _nameCtrl = TextEditingController(text: w?.name ?? '');
     _groupCtrl = TextEditingController(text: w?.group ?? '');
-    _latCtrl = TextEditingController(text: (w?.latitude ?? widget.presetLat)?.toString() ?? '');
-    _lonCtrl = TextEditingController(text: (w?.longitude ?? widget.presetLon)?.toString() ?? '');
-    _accCtrl = TextEditingController(text: (w?.accuracy ?? widget.presetAcc ?? 3.0).toString());
+    _latCtrl = TextEditingController(
+      text: (w?.latitude ?? widget.presetLat)?.toString() ?? '',
+    );
+    _lonCtrl = TextEditingController(
+      text: (w?.longitude ?? widget.presetLon)?.toString() ?? '',
+    );
+    _accCtrl = TextEditingController(
+      text: (w?.accuracy ?? widget.presetAcc ?? 3.0).toString(),
+    );
   }
 
   @override
@@ -867,13 +1108,27 @@ class _WaypointDialogState extends State<_WaypointDialog> {
     final acc = double.tryParse(_accCtrl.text.trim()) ?? 3.0;
 
     if (name.isEmpty || lat == null || lon == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Проверь название и координаты')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Проверь название и координаты')),
+      );
       return;
     }
 
     final w = widget.initial != null
-        ? widget.initial!.copyWith(name: name, group: group, latitude: lat, longitude: lon, accuracy: acc)
-        : Waypoint(name: name, group: group, latitude: lat, longitude: lon, accuracy: acc);
+        ? widget.initial!.copyWith(
+            name: name,
+            group: group,
+            latitude: lat,
+            longitude: lon,
+            accuracy: acc,
+          )
+        : Waypoint(
+            name: name,
+            group: group,
+            latitude: lat,
+            longitude: lon,
+            accuracy: acc,
+          );
 
     Navigator.of(context).pop(w);
   }
@@ -888,10 +1143,23 @@ class _WaypointDialogState extends State<_WaypointDialog> {
           mainAxisSize: MainAxisSize.min,
           children: [
             if (widget.infoLine != null) ...[
-              Text(widget.infoLine!, style: const TextStyle(fontSize: 12, color: FMagnitTheme.textMuted)),
+              Text(
+                widget.infoLine!,
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: FMagnitTheme.textMuted,
+                ),
+              ),
               const SizedBox(height: 8),
             ],
-            TextField(controller: _nameCtrl, autofocus: true, decoration: const InputDecoration(labelText: 'Название', hintText: 'например, Магнит на Ленина 5')),
+            TextField(
+              controller: _nameCtrl,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'Название',
+                hintText: 'например, Магнит на Ленина 5',
+              ),
+            ),
             const SizedBox(height: 10),
             TextField(
               controller: _groupCtrl,
@@ -903,23 +1171,55 @@ class _WaypointDialogState extends State<_WaypointDialog> {
                     : PopupMenuButton<String>(
                         icon: const Icon(Icons.arrow_drop_down),
                         tooltip: 'Выбрать существующую',
-                        onSelected: (v) => _groupCtrl.text = v,
-                        itemBuilder: (_) => widget.groups.map((g) => PopupMenuItem(value: g, child: Text(g))).toList(),
+                        onSelected: (v) {
+                          _groupCtrl.text = v;
+                        },
+                        itemBuilder: (_) => widget.groups
+                            .map((g) => PopupMenuItem(
+                                  value: g,
+                                  child: Text(g),
+                                ))
+                            .toList(),
                       ),
               ),
             ),
             const SizedBox(height: 10),
-            TextField(controller: _latCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true), decoration: const InputDecoration(labelText: 'Latitude')),
+            TextField(
+              controller: _latCtrl,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+                signed: true,
+              ),
+              decoration: const InputDecoration(labelText: 'Latitude'),
+            ),
             const SizedBox(height: 10),
-            TextField(controller: _lonCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true), decoration: const InputDecoration(labelText: 'Longitude')),
+            TextField(
+              controller: _lonCtrl,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+                signed: true,
+              ),
+              decoration: const InputDecoration(labelText: 'Longitude'),
+            ),
             const SizedBox(height: 10),
-            TextField(controller: _accCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'Accuracy (m)')),
+            TextField(
+              controller: _accCtrl,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(labelText: 'Accuracy (m)'),
+            ),
           ],
         ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Отмена')),
-        FilledButton(onPressed: _save, child: const Text('Сохранить')),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          onPressed: _save,
+          child: const Text('Сохранить'),
+        ),
       ],
     );
   }
