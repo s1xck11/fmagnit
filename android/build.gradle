@@ -15,7 +15,6 @@ allprojects {
         google()
         mavenCentral()
     }
-    // Жёстко фиксируем версию Kotlin, чтобы убрать дубликаты классов
     configurations.all {
         resolutionStrategy {
             force "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
