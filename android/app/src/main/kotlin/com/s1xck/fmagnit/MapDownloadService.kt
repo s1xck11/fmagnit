@@ -14,12 +14,10 @@ import android.os.Looper
 import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
-import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.cachemanager.CacheManager
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.BoundingBox
 import org.osmdroid.views.MapView
-import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
 class MapDownloadService : Service() {
@@ -210,7 +208,6 @@ class MapDownloadService : Service() {
             createNotificationChannel()
             startForeground(NOTIFICATION_ID, buildNotification(name))
 
-            // MapView должен создаваться в UI-потоке — работаем через mainHandler
             mainHandler.post {
                 try {
                     if (mapView == null) {
@@ -328,7 +325,7 @@ class MapDownloadService : Service() {
     }
 
     private fun buildNotification(region: String): Notification {
-        val openIntent = Intent(this, com.google.android.apps.maps.MapsActivity::class.java).apply {
+        val openIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         val piFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
