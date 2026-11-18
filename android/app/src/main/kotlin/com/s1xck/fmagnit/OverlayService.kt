@@ -57,8 +57,10 @@ class OverlayService : Service() {
         const val NOTIFICATION_ID = 4201
         const val CHANNEL_ID = "fmagnit_overlay"
 
-        private const val COLOR_HEADER_BG = 0xFF1E1E1E.toInt()
-        private const val COLOR_STROKE = 0xFF3D3D3D.toInt()
+        private const val COLOR_PILL = 0xF2141414.toInt()
+        private const val COLOR_PANEL = 0xF2121212.toInt()
+        private const val COLOR_CARD = 0xFF202020.toInt()
+        private const val COLOR_STROKE = 0xFF2E2E2E.toInt()
         private const val COLOR_TEXT = 0xFFFFFFFF.toInt()
         private const val COLOR_DOT_ACTIVE = 0xFF009E27.toInt()
         private const val COLOR_DOT_IDLE = 0xFFE30613.toInt()
@@ -71,9 +73,9 @@ class OverlayService : Service() {
         private const val COLOR_PLATE_TEXT = 0xFF1E1E1E.toInt()
         private const val COLOR_MY_LOCATION = 0xFF2196F3.toInt()
 
-        private const val HEADER_HEIGHT_DP = 56
+        private const val HEADER_HEIGHT_DP = 44
         private const val STATUS_FONT_SP = 12f
-        private const val DOT_SIZE_SP = 14f
+        private const val DOT_SIZE_SP = 10f
 
         private const val DOOR_SEARCH_RADIUS_M = 50.0
 
@@ -101,6 +103,7 @@ class OverlayService : Service() {
 
     private var headerWindowView: LinearLayout? = null
     private var headerWindowLp: WindowManager.LayoutParams? = null
+    private var headerArrow: TextView? = null
 
     private var contentWindowView: LinearLayout? = null
     private var contentWindowLp: WindowManager.LayoutParams? = null
@@ -110,6 +113,7 @@ class OverlayService : Service() {
     private var dotView: TextView? = null
 
     private var expanded = false
+    private var pointsExpanded = true
     private var doorsExpanded = false
     private var isRunning = false
 
@@ -201,10 +205,7 @@ class OverlayService : Service() {
                     val lon = intent.getDoubleExtra(EXTRA_ORDER_LON, Double.NaN)
                     if (!lat.isNaN() && !lon.isNaN()) {
                         OrderTargetStore.save(this, lat, lon)
-                        handler.post {
-                            // Автооткрытие карты при получении заказа
-                            openFullMap(lat, lon)
-                        }
+                        handler.post { openFullMap(lat, lon) }
                     }
                 }
                 ACTION_ORDER_TARGET_CLEAR -> {
@@ -319,15 +320,17 @@ class OverlayService : Service() {
 
     // ===================== ОКНО ШАПКИ =====================
 
+    private fun headerWidthFor(pct: Int): Int =
+        ((resources.displayMetrics.widthPixels * (pct / 100f)) - dp(16)).toInt().coerceAtLeast(dp(120))
+
     private fun buildHeaderWindow() {
         val ctx = this
-        val screenW = resources.displayMetrics.widthPixels
 
         val header = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(20), 0, dp(16), 0)
-            background = roundedBg(COLOR_HEADER_BG, 0)
+            setPadding(dp(14), 0, dp(12), 0)
+            background = roundedBg(COLOR_PILL, 22, COLOR_STROKE, 1)
             setOnClickListener { toggleExpanded() }
         }
 
@@ -335,32 +338,40 @@ class OverlayService : Service() {
             text = "●"
             setTextColor(COLOR_DOT_IDLE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, DOT_SIZE_SP)
-            setPadding(0, 0, dp(12), 0)
+            setPadding(0, 0, dp(8), 0)
         }
 
         activeLabel = TextView(ctx).apply {
             text = currentActiveNameOrPlaceholder()
-            setTextColor(COLOR_MUTED)
+            setTextColor(COLOR_TEXT)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, STATUS_FONT_SP)
             setSingleLine(true)
             ellipsize = TextUtils.TruncateAt.END
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
 
+        headerArrow = TextView(ctx).apply {
+            text = "▾"
+            setTextColor(COLOR_MUTED)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setPadding(dp(6), 0, 0, 0)
+        }
+
         header.addView(dotView)
         header.addView(activeLabel)
+        header.addView(headerArrow)
 
         headerWindowView = header
 
-        val headerWidth = (screenW * 0.65).toInt()
+        val pct = OverlayPrefs.loadHeaderWidthPct(this)
 
         headerWindowLp = WindowManager.LayoutParams(
-            headerWidth, dp(HEADER_HEIGHT_DP), windowType(),
+            headerWidthFor(pct), dp(HEADER_HEIGHT_DP), windowType(),
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = 0; y = 0
+            x = dp(8); y = dp(8)
         }
 
         try {
@@ -370,6 +381,18 @@ class OverlayService : Service() {
         }
 
         applyDotColor()
+    }
+
+    private fun changeHeaderWidth(delta: Int) {
+        val cur = OverlayPrefs.loadHeaderWidthPct(this)
+        val next = (cur + delta).coerceIn(20, 100)
+        if (next == cur) return
+        OverlayPrefs.saveHeaderWidthPct(this, next)
+        headerWindowLp?.width = headerWidthFor(next)
+        try {
+            windowManager?.updateViewLayout(headerWindowView, headerWindowLp)
+        } catch (_: Throwable) {}
+        rebuildContent()
     }
 
     // ===================== ОКНО КОНТЕНТА =====================
@@ -383,12 +406,12 @@ class OverlayService : Service() {
         try {
             val ctx = this
             val dm = resources.displayMetrics
-            val w = (dm.widthPixels * 0.9).toInt()
+            val w = (dm.widthPixels * 0.92).toInt()
 
             val wrapper = LinearLayout(ctx).apply {
                 orientation = LinearLayout.VERTICAL
-                background = roundedBg(COLOR_HEADER_BG, 16, COLOR_STROKE, 1)
-                setPadding(dp(16), dp(12), dp(16), dp(16))
+                background = roundedBg(COLOR_PANEL, 20, COLOR_STROKE, 1)
+                setPadding(dp(14), dp(12), dp(14), dp(14))
             }
 
             val topRow = LinearLayout(ctx).apply {
@@ -405,28 +428,26 @@ class OverlayService : Service() {
             topRow.addView(TextView(ctx).apply {
                 text = "×"
                 setTextColor(COLOR_TEXT)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
                 gravity = Gravity.CENTER
-                background = roundedBg(COLOR_ACCENT, 20)
-                setPadding(dp(12), dp(0), dp(12), dp(4))
+                background = roundedBg(COLOR_INACTIVE, 12)
+                setPadding(dp(12), dp(2), dp(12), dp(6))
                 setOnClickListener { toggleExpanded() }
             })
             wrapper.addView(topRow)
 
             wrapper.addView(View(ctx).apply {
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).also {
-                    it.topMargin = dp(8); it.bottomMargin = dp(8)
+                    it.topMargin = dp(10); it.bottomMargin = dp(10)
                 }
-                setBackgroundColor(0x22FFFFFF)
+                setBackgroundColor(COLOR_STROKE)
             })
 
             contentContainer = LinearLayout(ctx).apply {
                 orientation = LinearLayout.VERTICAL
             }
 
-            // Скролл с ограничением высоты: длинный список точек/домофонов
-            // не уедет за экран, кнопки останутся доступны.
-            val maxContentH = (dm.heightPixels * 0.7).toInt()
+            val maxContentH = (dm.heightPixels * 0.78).toInt()
             val scroll = object : ScrollView(ctx) {
                 override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
                     val capped = MeasureSpec.makeMeasureSpec(maxContentH, MeasureSpec.AT_MOST)
@@ -474,9 +495,8 @@ class OverlayService : Service() {
 
     private fun toggleExpanded() {
         expanded = !expanded
+        headerArrow?.text = if (expanded) "▴" else "▾"
         if (expanded) {
-            // Коды всегда перечитываем из общего файла — свежие,
-            // даже если пуш из приложения не дошёл.
             reloadDoorCodesFromFile()
             showContentWindow()
         } else {
@@ -491,6 +511,284 @@ class OverlayService : Service() {
 
     private fun applyDotColor() {
         dotView?.setTextColor(if (isRunning) COLOR_DOT_ACTIVE else COLOR_DOT_IDLE)
+    }
+
+    // ===================== UI-ХЕЛПЕРЫ =====================
+
+    private fun card(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        background = roundedBg(COLOR_CARD, 14)
+        setPadding(dp(12), dp(10), dp(12), dp(12))
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).also { it.bottomMargin = dp(10) }
+    }
+
+    private fun sectionTitle(text: String, expanded: Boolean?, onClick: (() -> Unit)?): TextView {
+        return TextView(this).apply {
+            this.text = if (expanded == null) text else text + (if (expanded) "  ▴" else "  ▾")
+            setTextColor(if (onClick != null) COLOR_TEXT else COLOR_MUTED)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(0, 0, 0, dp(6))
+            if (onClick != null) setOnClickListener { onClick() }
+        }
+    }
+
+    private fun actionBtn(text: String, bg: Int, onClick: () -> Unit): TextView {
+        return TextView(this).apply {
+            this.text = text
+            setTextColor(COLOR_TEXT)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setPadding(dp(10), dp(12), dp(10), dp(12))
+            background = roundedBg(bg, 12)
+            setOnClickListener { onClick() }
+        }
+    }
+
+    private fun row2(a: View, b: View): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).also { it.topMargin = dp(8) }
+            addView(a, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).also { it.rightMargin = dp(4) })
+            addView(b, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).also { it.leftMargin = dp(4) })
+        }
+    }
+
+    private fun mutedLine(text: String): TextView = TextView(this).apply {
+        this.text = text
+        setTextColor(COLOR_MUTED)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        setPadding(0, dp(2), 0, dp(2))
+    }
+
+    // ===================== КАРТОЧКИ ПАНЕЛИ =====================
+
+    private fun buildOrderCard(lat: Double, lon: Double): LinearLayout {
+        val c = card()
+        c.addView(sectionTitle("ЗАКАЗ КЛИЕНТА", null, null))
+        c.addView(TextView(this).apply {
+            text = String.format(Locale.US, "%.6f, %.6f", lat, lon)
+            setTextColor(COLOR_TEXT)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setPadding(0, 0, 0, dp(4))
+        })
+
+        val nearby = findNearbyDoorCodes(lat, lon)
+        if (nearby.isNotEmpty()) {
+            c.addView(TextView(this).apply {
+                text = "Код: " + nearby.joinToString(", ") { it.code }
+                setTextColor(COLOR_DOOR_OK)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                setTypeface(typeface, Typeface.BOLD)
+                setPadding(0, 0, 0, dp(4))
+            })
+        } else if (hasNearbyPointWithoutCode(lat, lon)) {
+            c.addView(mutedLine("Код домофона: пока нет"))
+        }
+
+        val go = actionBtn("ПЕРЕЙТИ", COLOR_ACCENT) {
+            try {
+                isRunning = MockManager.start(this@OverlayService, lat, lon, 5.0, 0.0, 1000L)
+                OverlayPrefs.saveRunning(this@OverlayService, isRunning)
+                rebuildContent()
+            } catch (_: Throwable) {}
+        }
+        val map = actionBtn("КАРТА", COLOR_INACTIVE) { openFullMap(lat, lon) }
+        c.addView(row2(go, map))
+
+        c.addView(TextView(this).apply {
+            text = "✕  закрыть заказ"
+            setTextColor(COLOR_MUTED)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            gravity = Gravity.CENTER
+            setPadding(0, dp(8), 0, 0)
+            setOnClickListener {
+                OrderTargetStore.clear(this@OverlayService)
+                rebuildContent()
+            }
+        })
+        return c
+    }
+
+    private fun buildPointsCard(): LinearLayout {
+        val c = card()
+        val points = parsePoints(currentPointsJson)
+        c.addView(sectionTitle("ТОЧКИ (${points.size})", pointsExpanded) {
+            pointsExpanded = !pointsExpanded
+            rebuildContent()
+        })
+        if (!pointsExpanded) return c
+
+        if (points.isEmpty()) {
+            c.addView(mutedLine("Нет точек. Добавь в fmagnit."))
+            return c
+        }
+        points.forEach { (id, name) ->
+            val isActive = id == currentActiveId
+            c.addView(TextView(this).apply {
+                text = (if (isActive) "●  " else "○  ") + name
+                setTextColor(if (isActive) COLOR_ACCENT else COLOR_TEXT)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                setPadding(dp(2), dp(8), dp(2), dp(8))
+                setOnClickListener {
+                    currentActiveId = id
+                    OverlayPrefs.saveActiveId(this@OverlayService, id)
+                    activeLabel?.text = name
+                    rebuildContent()
+                }
+            })
+        }
+        return c
+    }
+
+    private fun buildActionsCard(): LinearLayout {
+        val c = card()
+        c.addView(sectionTitle("ДЕЙСТВИЯ", null, null))
+
+        val toggle = actionBtn(if (isRunning) "СТОП" else "СТАРТ", if (isRunning) COLOR_INACTIVE else COLOR_ACCENT) {
+            try {
+                if (isRunning) {
+                    MockManager.stop(this@OverlayService)
+                    isRunning = false
+                    OverlayPrefs.saveRunning(this@OverlayService, false)
+                } else {
+                    val id = currentActiveId
+                    if (id != null) {
+                        val point = parsePointsFull(currentPointsJson).firstOrNull { it.first == id }
+                        if (point != null) {
+                            isRunning = MockManager.start(this@OverlayService, point.second, point.third, point.fourth, 0.0, 1000L)
+                            OverlayPrefs.saveRunning(this@OverlayService, isRunning)
+                        }
+                    }
+                }
+                rebuildContent()
+            } catch (_: Throwable) {}
+        }
+        toggle.layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        c.addView(toggle)
+
+        c.addView(row2(
+            actionBtn("ВОССТАНОВИТЬ GPS", COLOR_INACTIVE) {
+                try {
+                    MockManager.forceReset(this@OverlayService)
+                    isRunning = false
+                    OverlayPrefs.saveRunning(this@OverlayService, false)
+                    Toast.makeText(this@OverlayService, "GPS восстановлен.", Toast.LENGTH_LONG).show()
+                    rebuildContent()
+                } catch (_: Throwable) {}
+            },
+            actionBtn("СОХРАНИТЬ КОД GPS", COLOR_INACTIVE) { openAddDoorCodeDialog() }
+        ))
+
+        c.addView(row2(
+            actionBtn("ПРОЧИТАТЬ АДРЕС", COLOR_INACTIVE) {
+                val ok = OverlayBridge.requestScreenScan()
+                Toast.makeText(
+                    this@OverlayService,
+                    if (ok) "Читаю экран…"
+                    else "Спецвозможности не подключены. Включи fmagnit в спецвозможностях.",
+                    Toast.LENGTH_LONG
+                ).show()
+            },
+            actionBtn("АДРЕС ВРУЧНУЮ", COLOR_INACTIVE) { openManualAddressDialog() }
+        ))
+        return c
+    }
+
+    private fun buildDoorsCard(): LinearLayout {
+        val c = card()
+        val doors = parseDoorPoints(currentDoorCodesJson)
+        c.addView(sectionTitle("ДОМОФОНЫ (${doors.size})", doorsExpanded) {
+            doorsExpanded = !doorsExpanded
+            rebuildContent()
+        })
+        if (!doorsExpanded) return c
+
+        if (doors.isEmpty()) {
+            c.addView(mutedLine("Пока нет кодов. Добавь в приложении или кнопкой выше."))
+            return c
+        }
+
+        val myLoc = try { getCurrentLocation() } catch (_: Throwable) { null }
+        val sortedDoors = if (myLoc != null) {
+            doors.map {
+                it.copy(distance = distanceMeters(myLoc.latitude, myLoc.longitude, it.lat, it.lon))
+            }.sortedBy { it.distance }
+        } else {
+            doors.sortedBy { it.address.lowercase(Locale.US) }
+        }
+
+        sortedDoors.forEach { d ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(2), dp(6), dp(2), dp(6))
+            }
+            row.addView(TextView(this).apply {
+                text = d.code
+                setTextColor(COLOR_DOOR_OK)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                setTypeface(typeface, Typeface.BOLD)
+            })
+            val sub = buildString {
+                if (d.address.isNotEmpty()) append(d.address)
+                if (myLoc != null) {
+                    if (isNotEmpty()) append("  •  ")
+                    append("${d.distance.toInt()} м")
+                }
+            }
+            if (sub.isNotEmpty()) {
+                row.addView(TextView(this).apply {
+                    text = sub
+                    setTextColor(COLOR_MUTED)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                })
+            }
+            c.addView(row)
+        }
+        return c
+    }
+
+    private fun buildViewCard(): LinearLayout {
+        val c = card()
+        c.addView(sectionTitle("ВИД", null, null))
+
+        val pct = OverlayPrefs.loadHeaderWidthPct(this)
+
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        row.addView(TextView(this).apply {
+            text = "Ширина шапки"
+            setTextColor(COLOR_TEXT)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        row.addView(actionBtn("−", COLOR_INACTIVE) { changeHeaderWidth(-5) }.apply {
+            layoutParams = LinearLayout.LayoutParams(dp(44), ViewGroup.LayoutParams.WRAP_CONTENT)
+        })
+        row.addView(TextView(this).apply {
+            text = "$pct%"
+            setTextColor(COLOR_TEXT)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(dp(56), ViewGroup.LayoutParams.WRAP_CONTENT)
+        })
+        row.addView(actionBtn("+", COLOR_INACTIVE) { changeHeaderWidth(+5) }.apply {
+            layoutParams = LinearLayout.LayoutParams(dp(44), ViewGroup.LayoutParams.WRAP_CONTENT)
+        })
+        c.addView(row)
+        c.addView(mutedLine("20–100%, шаг 5%. Применяется сразу."))
+        return c
     }
 
     // ===================== КАРТА =====================
@@ -820,6 +1118,7 @@ class OverlayService : Service() {
         try {
             closeFullMap()
             expanded = false
+            headerArrow?.text = "▾"
             removeContentWindow()
 
             val ctx = this
@@ -877,7 +1176,7 @@ class OverlayService : Service() {
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
                 setTypeface(typeface, Typeface.BOLD)
                 gravity = Gravity.CENTER
-                background = roundedBg(COLOR_HEADER_BG, 20)
+                background = roundedBg(COLOR_HEADER_BG_DARK, 20)
                 setPadding(dp(10), dp(6), dp(10), dp(6))
                 visibility = View.GONE
                 setOnClickListener {
@@ -906,13 +1205,13 @@ class OverlayService : Service() {
 
             val wrapper = LinearLayout(ctx).apply {
                 orientation = LinearLayout.VERTICAL
-                background = roundedBg(COLOR_HEADER_BG, 16, COLOR_STROKE, 1)
+                background = roundedBg(COLOR_PANEL, 16, COLOR_STROKE, 1)
                 setPadding(dp(8), dp(8), dp(8), dp(8))
                 addView(container, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
             }
 
             val dm = resources.displayMetrics
-            val w = (dm.widthPixels * 0.9).toInt()
+            val w = (dm.widthPixels * 0.92).toInt()
             val h = (dm.heightPixels * 0.85).toInt()
 
             fullMapLayoutParams = WindowManager.LayoutParams(
@@ -953,309 +1252,17 @@ class OverlayService : Service() {
             val container = contentContainer ?: return
             container.removeAllViews()
 
-            // ===== Ручное чтение адреса с экрана Магнита =====
-            val readRow = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-            }
-
-            val readBtn = TextView(this).apply {
-                text = "📖 ПРОЧИТАТЬ АДРЕС"
-                setTextColor(COLOR_TEXT)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                setTypeface(typeface, Typeface.BOLD)
-                gravity = Gravity.CENTER
-                setPadding(dp(12), dp(12), dp(12), dp(12))
-                background = roundedBg(COLOR_ACCENT, 12)
-                setOnClickListener {
-                    val ok = OverlayBridge.requestScreenScan()
-                    Toast.makeText(
-                        this@OverlayService,
-                        if (ok) "Читаю экран…"
-                        else "Спецвозможности не подключены. Включи fmagnit в спецвозможностях.",
-                        Toast.LENGTH_LONG
-                    ).show()
-                }
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).also { it.rightMargin = dp(6) }
-            }
-
-            val manualBtn = TextView(this).apply {
-                text = "⌨️ ВРУЧНУЮ"
-                setTextColor(COLOR_TEXT)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                setTypeface(typeface, Typeface.BOLD)
-                gravity = Gravity.CENTER
-                setPadding(dp(12), dp(12), dp(12), dp(12))
-                background = roundedBg(COLOR_INACTIVE, 12)
-                setOnClickListener { openManualAddressDialog() }
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).also { it.leftMargin = dp(6) }
-            }
-
-            readRow.addView(readBtn)
-            readRow.addView(manualBtn)
-            container.addView(readRow)
-
             val order = OrderTargetStore.load(this)
             if (order != null) {
-                addOrderBlock(container, order.first, order.second)
-                container.addView(View(this).apply {
-                    layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).also {
-                        it.topMargin = dp(4); it.bottomMargin = dp(8)
-                    }
-                    setBackgroundColor(0x22FFFFFF)
-                })
+                container.addView(buildOrderCard(order.first, order.second))
             }
-
-            val points = parsePoints(currentPointsJson)
-            if (points.isEmpty()) {
-                container.addView(TextView(this).apply {
-                    text = "Нет точек. Добавь в fmagnit."
-                    setTextColor(COLOR_MUTED)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                    setPadding(0, dp(6), 0, dp(6))
-                })
-            } else {
-                points.forEach { (id, name) ->
-                    val isActive = id == currentActiveId
-                    val row = TextView(this).apply {
-                        text = (if (isActive) "● " else "○ ") + name
-                        setTextColor(if (isActive) COLOR_ACCENT else COLOR_TEXT)
-                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                        setPadding(dp(4), dp(10), dp(4), dp(10))
-                        setOnClickListener {
-                            currentActiveId = id
-                            OverlayPrefs.saveActiveId(this@OverlayService, id)
-                            activeLabel?.text = name
-                            rebuildContent()
-                        }
-                    }
-                    container.addView(row)
-                }
-            }
-
-            val toggleBtn = TextView(this).apply {
-                text = if (isRunning) "СТОП" else "СТАРТ"
-                setTextColor(COLOR_TEXT)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setTypeface(typeface, Typeface.BOLD)
-                gravity = Gravity.CENTER
-                setPadding(dp(16), dp(12), dp(16), dp(12))
-                background = roundedBg(if (isRunning) COLOR_INACTIVE else COLOR_ACCENT, 12)
-                setOnClickListener {
-                    try {
-                        if (isRunning) {
-                            MockManager.stop(this@OverlayService)
-                            isRunning = false
-                            OverlayPrefs.saveRunning(this@OverlayService, false)
-                        } else {
-                            val id = currentActiveId
-                            if (id != null) {
-                                val point = parsePointsFull(currentPointsJson).firstOrNull { it.first == id }
-                                if (point != null) {
-                                    isRunning = MockManager.start(this@OverlayService, point.second, point.third, point.fourth, 0.0, 1000L)
-                                    OverlayPrefs.saveRunning(this@OverlayService, isRunning)
-                                }
-                            }
-                        }
-                        rebuildContent()
-                    } catch (_: Throwable) {}
-                }
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).also { it.topMargin = dp(10) }
-            }
-            container.addView(toggleBtn)
-
-            val restoreBtn = TextView(this).apply {
-                text = "ВОССТАНОВИТЬ GPS"
-                setTextColor(COLOR_MUTED)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                setTypeface(typeface, Typeface.BOLD)
-                gravity = Gravity.CENTER
-                setPadding(dp(16), dp(10), dp(16), dp(10))
-                background = roundedBg(COLOR_INACTIVE, 12)
-                setOnClickListener {
-                    try {
-                        MockManager.forceReset(this@OverlayService)
-                        isRunning = false
-                        OverlayPrefs.saveRunning(this@OverlayService, false)
-                        Toast.makeText(this@OverlayService, "GPS восстановлен.", Toast.LENGTH_LONG).show()
-                        rebuildContent()
-                    } catch (_: Throwable) {}
-                }
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).also { it.topMargin = dp(8) }
-            }
-            container.addView(restoreBtn)
-
-            val addDoorBtn = TextView(this).apply {
-                text = "📍 СОХРАНИТЬ КОД GPS"
-                setTextColor(COLOR_TEXT)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                setTypeface(typeface, Typeface.BOLD)
-                gravity = Gravity.CENTER
-                setPadding(dp(16), dp(10), dp(16), dp(10))
-                background = roundedBg(COLOR_INACTIVE, 12)
-                setOnClickListener { openAddDoorCodeDialog() }
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).also { it.topMargin = dp(8) }
-            }
-            container.addView(addDoorBtn)
-
-            // ===== ДОМОФОНЫ: сворачиваемый список =====
-            val doors = parseDoorPoints(currentDoorCodesJson)
-            container.addView(TextView(this).apply {
-                text = (if (doorsExpanded) "Домофоны ▲" else "Домофоны ▼") + "  (${doors.size})"
-                setTextColor(COLOR_TEXT)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                setTypeface(typeface, Typeface.BOLD)
-                setPadding(dp(4), dp(12), dp(4), dp(4))
-                setOnClickListener {
-                    doorsExpanded = !doorsExpanded
-                    rebuildContent()
-                }
-            })
-
-            if (doorsExpanded) {
-                if (doors.isEmpty()) {
-                    container.addView(TextView(this).apply {
-                        text = "Пока нет кодов. Добавь в приложении или кнопкой выше."
-                        setTextColor(COLOR_MUTED)
-                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                        setPadding(dp(4), dp(2), dp(4), dp(6))
-                    })
-                } else {
-                    val myLoc = try { getCurrentLocation() } catch (_: Throwable) { null }
-                    val sortedDoors = if (myLoc != null) {
-                        doors.map {
-                            it.copy(distance = distanceMeters(myLoc.latitude, myLoc.longitude, it.lat, it.lon))
-                        }.sortedBy { it.distance }
-                    } else {
-                        doors.sortedBy { it.address.lowercase(Locale.US) }
-                    }
-
-                    sortedDoors.forEach { d ->
-                        val row = LinearLayout(this).apply {
-                            orientation = LinearLayout.VERTICAL
-                            setPadding(dp(4), dp(8), dp(4), dp(8))
-                        }
-                        row.addView(TextView(this).apply {
-                            text = d.code
-                            setTextColor(COLOR_DOOR_OK)
-                            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                            setTypeface(typeface, Typeface.BOLD)
-                        })
-                        val sub = buildString {
-                            if (d.address.isNotEmpty()) append(d.address)
-                            if (myLoc != null) {
-                                if (isNotEmpty()) append("  •  ")
-                                append("${d.distance.toInt()} м")
-                            }
-                        }
-                        if (sub.isNotEmpty()) {
-                            row.addView(TextView(this).apply {
-                                text = sub
-                                setTextColor(COLOR_MUTED)
-                                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-                            })
-                        }
-                        container.addView(row)
-                    }
-                }
-            }
-
+            container.addView(buildPointsCard())
+            container.addView(buildActionsCard())
+            container.addView(buildDoorsCard())
+            container.addView(buildViewCard())
         } catch (e: Throwable) {
             CrashLogger.log(this, "rebuildContent", e)
         }
-    }
-
-    private fun addOrderBlock(container: LinearLayout, lat: Double, lon: Double) {
-        try {
-            container.addView(TextView(this).apply {
-                text = "Заказ клиента"
-                setTextColor(COLOR_ACCENT)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                setTypeface(typeface, Typeface.BOLD)
-                setPadding(0, dp(4), 0, dp(4))
-            })
-
-            container.addView(TextView(this).apply {
-                text = String.format(Locale.US, "%.6f, %.6f", lat, lon)
-                setTextColor(COLOR_TEXT)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                setPadding(0, 0, 0, dp(6))
-            })
-
-            val nearby = findNearbyDoorCodes(lat, lon)
-            if (nearby.isNotEmpty()) {
-                val codesText = nearby.joinToString(", ") { it.code }
-                container.addView(TextView(this).apply {
-                    text = "Возможный код домофона: $codesText"
-                    setTextColor(COLOR_DOOR_OK)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                    setTypeface(typeface, Typeface.BOLD)
-                    setPadding(0, 0, 0, dp(10))
-                })
-            } else if (hasNearbyPointWithoutCode(lat, lon)) {
-                container.addView(TextView(this).apply {
-                    text = "Возможный код домофона: кода пока нет"
-                    setTextColor(COLOR_MUTED)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                    setPadding(0, 0, 0, dp(10))
-                })
-            }
-
-            container.addView(TextView(this).apply {
-                text = "ОТКРЫТЬ КАРТУ"
-                setTextColor(COLOR_TEXT)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setTypeface(typeface, Typeface.BOLD)
-                gravity = Gravity.CENTER
-                setPadding(dp(16), dp(12), dp(16), dp(12))
-                background = roundedBg(COLOR_INACTIVE, 12)
-                setOnClickListener { openFullMap(lat, lon) }
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).also { it.bottomMargin = dp(8) }
-            })
-
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-            }
-
-            val goBtn = TextView(this).apply {
-                text = "ПЕРЕЙТИ"
-                setTextColor(COLOR_TEXT)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setTypeface(typeface, Typeface.BOLD)
-                gravity = Gravity.CENTER
-                setPadding(dp(14), dp(12), dp(14), dp(12))
-                background = roundedBg(COLOR_ACCENT, 12)
-                setOnClickListener {
-                    try {
-                        isRunning = MockManager.start(this@OverlayService, lat, lon, 5.0, 0.0, 1000L)
-                        OverlayPrefs.saveRunning(this@OverlayService, isRunning)
-                        rebuildContent()
-                    } catch (_: Throwable) {}
-                }
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).also { it.rightMargin = dp(6) }
-            }
-
-            val closeBtn = TextView(this).apply {
-                text = "ЗАКРЫТЬ"
-                setTextColor(COLOR_TEXT)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setTypeface(typeface, Typeface.BOLD)
-                gravity = Gravity.CENTER
-                setPadding(dp(14), dp(12), dp(14), dp(12))
-                background = roundedBg(COLOR_INACTIVE, 12)
-                setOnClickListener {
-                    OrderTargetStore.clear(this@OverlayService)
-                    expanded = false
-                    removeContentWindow()
-                }
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).also { it.leftMargin = dp(6) }
-            }
-
-            row.addView(goBtn)
-            row.addView(closeBtn)
-            container.addView(row)
-        } catch (_: Throwable) {}
     }
 
     // ===================== ПАРСЕРЫ =====================
@@ -1317,6 +1324,8 @@ class OverlayService : Service() {
         } catch (_: Throwable) {}
     }
 }
+
+private const val COLOR_HEADER_BG_DARK = 0xFF1E1E1E.toInt()
 
 const val ACTION_POINT_START = "com.s1xck.fmagnit.POINT_START"
 const val ACTION_POINT_STOP = "com.s1xck.fmagnit.POINT_STOP"
