@@ -763,6 +763,57 @@ class OverlayService : Service() {
         }
     }
 
+    // ===================== АДРЕС ВРУЧНУЮ =====================
+
+    private fun openManualAddressDialog() {
+        try {
+            val wrapper = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(24), dp(8), dp(24), 0)
+            }
+
+            val addrEt = EditText(this).apply {
+                hint = "Город, улица, дом (например: Ижевск, Пастухова 82)"
+                setSingleLine(false)
+                minLines = 2
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            }
+            wrapper.addView(addrEt)
+
+            val hintTv = TextView(this).apply {
+                text = "Адрес геокодится через OpenStreetMap и становится точкой заказа."
+                setTextColor(COLOR_MUTED)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setPadding(0, dp(8), 0, 0)
+            }
+            wrapper.addView(hintTv)
+
+            val dialog = AlertDialog.Builder(this)
+                .setTitle("Адрес заказа вручную")
+                .setView(wrapper)
+                .setPositiveButton("Найти", null)
+                .setNegativeButton("Отмена") { d, _ -> d.dismiss() }
+                .create()
+
+            dialog.window?.setType(windowType())
+            dialog.setOnShowListener {
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                    val txt = addrEt.text.toString().trim()
+                    if (txt.isEmpty()) {
+                        addrEt.error = "Введи адрес"
+                        return@setOnClickListener
+                    }
+                    dialog.dismiss()
+                    OrderCapture.process(this, txt, force = true)
+                }
+            }
+            dialog.show()
+        } catch (e: Throwable) {
+            CrashLogger.log(this, "openManualAddressDialog", e)
+            Toast.makeText(this, "Ошибка: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
     // ===================== ПОЛНАЯ КАРТА =====================
 
     private fun openFullMap(lat: Double, lon: Double) {
@@ -901,6 +952,48 @@ class OverlayService : Service() {
 
             val container = contentContainer ?: return
             container.removeAllViews()
+
+            // ===== Ручное чтение адреса с экрана Магнита =====
+            val readRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+
+            val readBtn = TextView(this).apply {
+                text = "📖 ПРОЧИТАТЬ АДРЕС"
+                setTextColor(COLOR_TEXT)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                setTypeface(typeface, Typeface.BOLD)
+                gravity = Gravity.CENTER
+                setPadding(dp(12), dp(12), dp(12), dp(12))
+                background = roundedBg(COLOR_ACCENT, 12)
+                setOnClickListener {
+                    val ok = OverlayBridge.requestScreenScan()
+                    Toast.makeText(
+                        this@OverlayService,
+                        if (ok) "Читаю экран…"
+                        else "Спецвозможности не подключены. Включи fmagnit в спецвозможностях.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).also { it.rightMargin = dp(6) }
+            }
+
+            val manualBtn = TextView(this).apply {
+                text = "⌨️ ВРУЧНУЮ"
+                setTextColor(COLOR_TEXT)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                setTypeface(typeface, Typeface.BOLD)
+                gravity = Gravity.CENTER
+                setPadding(dp(12), dp(12), dp(12), dp(12))
+                background = roundedBg(COLOR_INACTIVE, 12)
+                setOnClickListener { openManualAddressDialog() }
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).also { it.leftMargin = dp(6) }
+            }
+
+            readRow.addView(readBtn)
+            readRow.addView(manualBtn)
+            container.addView(readRow)
 
             val order = OrderTargetStore.load(this)
             if (order != null) {
