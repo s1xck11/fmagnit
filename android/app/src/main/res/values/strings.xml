@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="accessibility_description">fmagnit следит за тем, какое приложение на экране, чтобы показывать панель подмены только поверх приложения доставки.</string>
+    <string name="app_name">fmagnit</string>
+    <string name="accessibility_service_description">Показывает оверлей fmagnit поверх приложения Магнит и читает адрес заказа с экрана, чтобы автоматически ставить точку заказа на карте.</string>
 </resources>
