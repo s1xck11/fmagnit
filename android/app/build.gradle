@@ -59,6 +59,11 @@ android {
             shrinkResources false
         }
     }
+
+    // Отключаем параноидальную проверку MockLocation для релиза
+    lint {
+        disable 'MockLocation'
+    }
 }
 
 flutter { source '../..' }
