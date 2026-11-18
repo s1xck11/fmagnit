@@ -27,6 +27,11 @@ object MockManager {
     private var displayLon: Double = 0.0
     @Volatile private var running: Boolean = false
 
+    // Защита от гонки STOP -> START:
+    // каждый start повышает поколение, старый teardown видит это и отменяется.
+    private val lock = Any()
+    @Volatile private var generation: Int = 0
+
     private fun ensureInit(ctx: Context) {
         if (locationManager == null) locationManager = ctx.applicationContext.getSystemService(Context.LOCATION_SERVICE) as LocationManager
         if (handler == null) handler = Handler(Looper.getMainLooper())
@@ -116,9 +121,13 @@ object MockManager {
         ensureInit(ctx)
         if (!isMockLocationEnabled(ctx)) return false
         return try {
-            baseLat = lat; baseLon = lon; baseAcc = acc; baseAlt = alt; displayLat = lat; displayLon = lon
-            for (p in providers) ensureProvider(p)
-            running = true; pushLocation(); startPushLoop(intervalMs); true
+            synchronized(lock) {
+                generation++
+                baseLat = lat; baseLon = lon; baseAcc = acc; baseAlt = alt; displayLat = lat; displayLon = lon
+                for (p in providers) ensureProvider(p)
+                running = true
+            }
+            pushLocation(); startPushLoop(intervalMs); true
         } catch (e: Exception) { false }
     }
 
@@ -136,23 +145,48 @@ object MockManager {
     }
 
     fun stop(ctx: Context): Boolean {
-        ensureInit(ctx); running = false; stopPushLoop()
-        return try {
-            Thread.sleep(50)
-            for (p in providers) { try { locationManager?.setTestProviderEnabled(p, false) } catch (_: Exception) {}; try { locationManager?.removeTestProvider(p) } catch (_: Exception) {} }
-            Thread.sleep(150)
-            for (p in providers) { try { locationManager?.removeTestProvider(p) } catch (_: Exception) {} }
-            true
-        } catch (_: Exception) { false }
+        ensureInit(ctx)
+        running = false
+        stopPushLoop()
+        teardownAsync(generation)
+        return true
     }
 
     fun forceReset(ctx: Context): Boolean {
-        ensureInit(ctx); running = false; stopPushLoop()
-        return try {
-            for (p in providers) { try { locationManager?.setTestProviderEnabled(p, false) } catch (_: Exception) {}; try { locationManager?.removeTestProvider(p) } catch (_: Exception) {} }
-            Thread.sleep(200)
-            for (p in providers) { try { locationManager?.removeTestProvider(p) } catch (_: Exception) {} }
-            true
-        } catch (_: Exception) { false }
+        ensureInit(ctx)
+        running = false
+        stopPushLoop()
+        teardownAsync(generation)
+        return true
+    }
+
+    /**
+     * Снос test-провайдеров в фоне, чтобы не морозить main-поток.
+     * Последовательность и паузы те же, что были раньше.
+     * Если за время пауз случился новый start (поколение сменилось
+     * или running снова true) — снос отменяется, свежий mock не трогаем.
+     */
+    private fun teardownAsync(gen: Int) {
+        val t = Thread {
+            try { Thread.sleep(50) } catch (_: InterruptedException) {}
+            synchronized(lock) {
+                if (gen == generation && !running) {
+                    for (p in providers) {
+                        try { locationManager?.setTestProviderEnabled(p, false) } catch (_: Exception) {}
+                        try { locationManager?.removeTestProvider(p) } catch (_: Exception) {}
+                    }
+                }
+            }
+            try { Thread.sleep(150) } catch (_: InterruptedException) {}
+            synchronized(lock) {
+                if (gen == generation && !running) {
+                    for (p in providers) {
+                        try { locationManager?.removeTestProvider(p) } catch (_: Exception) {}
+                    }
+                }
+            }
+        }
+        t.name = "fmagnit-teardown"
+        t.start()
     }
 }
