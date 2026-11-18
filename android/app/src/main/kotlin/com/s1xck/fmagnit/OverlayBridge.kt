@@ -14,6 +14,11 @@ object OverlayBridge {
 
     private var stateChangeListener: (() -> Unit)? = null
 
+    // Хендлер ручного чтения экрана: ставит AccessibilityService,
+    // дёргает кнопка в оверлее.
+    @Volatile
+    var scanHandler: (() -> Unit)? = null
+
     fun setOverlayRunning(running: Boolean) {
         if (isOverlayRunning != running) {
             isOverlayRunning = running
@@ -34,5 +39,12 @@ object OverlayBridge {
 
     fun notifyStateChanged() {
         stateChangeListener?.invoke()
+    }
+
+    /** true = команда чтения ушла в службу спецвозможностей. */
+    fun requestScreenScan(): Boolean {
+        val h = scanHandler ?: return false
+        h.invoke()
+        return true
     }
 }
