@@ -9,8 +9,10 @@ import '../models/waypoint.dart';
 import '../services/mock_location_service.dart';
 import '../services/order_target_service.dart';
 import '../services/overlay_service.dart';
+import '../storage/door_code_storage.dart';
 import '../storage/waypoint_storage.dart';
 import 'address_search_dialog.dart';
+import 'door_codes_page.dart';
 import 'health_page.dart';
 import 'import_export_dialogs.dart';
 import 'map_download_page.dart';
@@ -25,6 +27,7 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final _storage = WaypointStorage();
+  final _doorStorage = DoorCodeStorage();
   final _overlay = OverlayService();
   final _mock = MockLocationService();
   final _orderTarget = OrderTargetService();
@@ -54,6 +57,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _refreshPermissions();
     _refreshOrderTarget();
     _refreshCrashLog();
+    _pushDoorCodesToOverlay();
     _overlay.setStartHandler(_onOverlayStartRequested);
 
     _stateTimer = Timer.periodic(const Duration(seconds: 2), (_) {
@@ -148,7 +152,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     });
   }
 
+  /// Пушим точки только если оверлей запущен.
+  /// Иначе startService молча поднимал бы остановленный сервис.
   Future<void> _pushPointsToOverlay() async {
+    final running = await _overlay.isOverlayRunning();
+    if (!running) return;
     final json = jsonEncode(_waypoints.map((w) => {
           'id': w.id,
           'name': w.name,
@@ -157,6 +165,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           'accuracy': w.accuracy,
         }).toList());
     await _overlay.updatePoints(pointsJson: json, activeId: _activeId);
+  }
+
+  /// Отправляет коды домофонов в оверлей (только если он запущен).
+  Future<void> _pushDoorCodesToOverlay() async {
+    try {
+      final running = await _overlay.isOverlayRunning();
+      if (!running) return;
+      final codes = await _doorStorage.loadAll();
+      await _overlay.updateDoorCodes(
+        codesJson: jsonEncode(codes.map((c) => c.toJson()).toList()),
+      );
+    } catch (_) {}
   }
 
   Future<void> _toggleOverlay() async {
@@ -178,6 +198,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       await _overlay.startOverlay();
       await Future.delayed(const Duration(milliseconds: 400));
       await _pushPointsToOverlay();
+      await _pushDoorCodesToOverlay();
     }
     await Future.delayed(const Duration(milliseconds: 600));
     await _refreshPermissions();
@@ -194,6 +215,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     await Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const MapDownloadPage()),
     );
+  }
+
+  Future<void> _openDoorCodes() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const DoorCodesPage()),
+    );
+    await _pushDoorCodesToOverlay();
   }
 
   Future<void> _restoreGps() async {
@@ -797,6 +825,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 case 'map_download':
                   _openMapDownload();
                   break;
+                case 'door_codes':
+                  _openDoorCodes();
+                  break;
                 case 'restore_gps':
                   _restoreGps();
                   break;
@@ -835,6 +866,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     Icon(Icons.download_for_offline_outlined, size: 20),
                     SizedBox(width: 12),
                     Text('Загрузка карт'),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'door_codes',
+                child: Row(
+                  children: [
+                    Icon(Icons.vpn_key_outlined, size: 20),
+                    SizedBox(width: 12),
+                    Text('Коды домофонов'),
                   ],
                 ),
               ),
@@ -907,8 +948,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       ),
       body: _loading
           ? const Center(
-              child: CircularProgressIndicator(color: FMagnitTheme.accent),
-            )
+              child: CircularProgressIndicator(color: FMagnitTheme.accent))
           : Column(
               children: [
                 Padding(
