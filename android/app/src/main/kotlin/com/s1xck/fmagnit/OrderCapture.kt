@@ -15,6 +15,7 @@ import java.net.URLEncoder
  * дедуп по адресу -> чистка хвоста (подъезд/этаж/квартира) ->
  * Nominatim -> OrderTargetStore -> пинок оверлею (карта + блок заказа).
  *
+ * force=true (ручная кнопка/ручной ввод) игнорирует дедуп и паузу неудач.
  * Работает полностью нативно, Flutter-движок не нужен.
  */
 object OrderCapture {
@@ -34,20 +35,23 @@ object OrderCapture {
     private fun prefs(ctx: Context) =
         ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    fun process(ctx: Context, raw: String) {
+    fun process(ctx: Context, raw: String, force: Boolean = false) {
         val address = raw.replace('\n', ' ').replace(Regex("\\s+"), " ").trim()
         if (address.isEmpty()) return
 
         val p = prefs(ctx)
-        // Уже перехвачен успешно — не трогаем.
-        if (address == p.getString(KEY_LAST, null)) return
         // Геокод уже в работе — не плодим потоки.
         if (address == p.getString(KEY_PENDING, null)) return
-        // Недавно не нашли — пауза 60 сек, потом можно снова.
-        val failAddr = p.getString(KEY_FAIL, null)
-        if (address == failAddr &&
-            System.currentTimeMillis() - p.getLong(KEY_FAIL_TS, 0L) < FAIL_COOLDOWN_MS
-        ) return
+
+        if (!force) {
+            // Уже перехвачен успешно — не трогаем.
+            if (address == p.getString(KEY_LAST, null)) return
+            // Недавно не нашли — пауза 60 сек, потом можно снова.
+            val failAddr = p.getString(KEY_FAIL, null)
+            if (address == failAddr &&
+                System.currentTimeMillis() - p.getLong(KEY_FAIL_TS, 0L) < FAIL_COOLDOWN_MS
+            ) return
+        }
 
         p.edit().putString(KEY_PENDING, address).apply()
         val app = ctx.applicationContext
@@ -72,6 +76,9 @@ object OrderCapture {
                         .putString(KEY_FAIL, address)
                         .putLong(KEY_FAIL_TS, System.currentTimeMillis())
                         .apply()
+                    try {
+                        CrashLogger.logMessage(app, "capture_debug", "geocode fail: $cleaned")
+                    } catch (_: Throwable) {}
                     Toast.makeText(app, "Не нашёл адрес на карте: $cleaned", Toast.LENGTH_LONG).show()
                 }
             }
