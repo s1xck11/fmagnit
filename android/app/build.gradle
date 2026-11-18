@@ -34,7 +34,9 @@ android {
     sourceSets { main.java.srcDirs += 'src/main/kotlin' }
 
     defaultConfig {
-        applicationId "com.s1xck.fmagnit"
+        // Пакет 2ГИС: курьерка шлёт интенты карт именно в него.
+        // Kotlin-пакет и namespace остаются com.s1xck.fmagnit.
+        applicationId "ru.dublgis.dgismobile"
         minSdk flutter.minSdkVersion
         targetSdk flutter.targetSdkVersion
         versionCode flutterVersionCode.toInteger()
