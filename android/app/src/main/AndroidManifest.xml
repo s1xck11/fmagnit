@@ -42,6 +42,78 @@
             </intent-filter>
         </activity>
 
+        <!-- Трамплин: ловит интенты карт от курьерки, парсит координаты, сразу закрывается -->
+        <activity
+            android:name=".OrderIntentActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:noHistory="true"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="geo" />
+            </intent-filter>
+
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="dgis" />
+            </intent-filter>
+
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="google.navigation" />
+            </intent-filter>
+
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+                <data android:host="2gis.ru" />
+                <data android:host="www.2gis.ru" />
+                <data android:host="go.2gis.com" />
+                <data android:host="maps.google.com" />
+                <data android:host="www.google.com" />
+            </intent-filter>
+
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
+
+        <!-- Алиасы на типовые входные activity 2ГИС: если курьерка бьёт явным компонентом -->
+        <activity-alias
+            android:name="ru.dublgis.dgismobile.ui.activity.StartActivity"
+            android:targetActivity=".OrderIntentActivity"
+            android:exported="true" />
+        <activity-alias
+            android:name="ru.dublgis.dgismobile.ui.activity.MainActivity"
+            android:targetActivity=".OrderIntentActivity"
+            android:exported="true" />
+        <activity-alias
+            android:name="ru.dublgis.dgismobile.ui.map.MapActivity"
+            android:targetActivity=".OrderIntentActivity"
+            android:exported="true" />
+        <activity-alias
+            android:name="ru.dublgis.dgismobile.MainActivity"
+            android:targetActivity=".OrderIntentActivity"
+            android:exported="true" />
+        <activity-alias
+            android:name="ru.dublgis.dgismobile.MapsActivity"
+            android:targetActivity=".OrderIntentActivity"
+            android:exported="true" />
+
         <service
             android:name=".OverlayService"
             android:exported="false"
