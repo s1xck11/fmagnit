@@ -1,7 +1,9 @@
 package com.s1xck.fmagnit
 
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
@@ -11,116 +13,158 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 
-class MainActivity: FlutterActivity() {
+class MainActivity : FlutterActivity() {
     private val OVERLAY_CHANNEL = "com.s1xck.fmagnit/overlay"
     private val OVERLAY_EVENT_CHANNEL = "com.s1xck.fmagnit/overlay_events"
     private val MOCK_CHANNEL = "com.s1xck.fmagnit/mock_location"
-    
+
     private var overlayEventSink: EventChannel.EventSink? = null
     private val handler = Handler(Looper.getMainLooper())
 
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        // Android 13+: без этого разрешения уведомление foreground-сервиса не показывается
+        if (Build.VERSION.SDK_INT >= 33) {
+            if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                requestPermissions(
+                    arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
+                    1001
+                )
+            }
+        }
+    }
+
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        
-        EventChannel(flutterEngine.dartExecutor.binaryMessenger, OVERLAY_EVENT_CHANNEL).setStreamHandler(object : EventChannel.StreamHandler {
-            override fun onListen(arguments: Any?, events: EventChannel.EventSink?) { 
-                overlayEventSink = events
-                sendOverlayState() 
+
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, OVERLAY_EVENT_CHANNEL)
+            .setStreamHandler(object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                    overlayEventSink = events
+                    sendOverlayState()
+                }
+                override fun onCancel(arguments: Any?) { overlayEventSink = null }
+            })
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, OVERLAY_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "hasOverlayPermission" -> result.success(hasOverlayPermission())
+                    "requestOverlayPermission" -> { requestOverlayPermission(); result.success(null) }
+                    "hasAccessibilityPermission" -> result.success(hasAccessibilityPermission())
+                    "openAccessibilitySettings" -> { openAccessibilitySettings(); result.success(null) }
+                    "hasUsageAccess" -> result.success(ForegroundDetector.hasUsageAccess(this))
+                    "openUsageAccessSettings" -> { openUsageAccessSettings(); result.success(null) }
+                    "getForegroundPackage" -> result.success(ForegroundDetector.getForegroundPackage(this))
+                    "startOverlay" -> result.success(startOverlayService())
+                    "stopOverlay" -> result.success(stopOverlayService())
+                    "isOverlayRunning" -> result.success(OverlayBridge.isOverlayRunning)
+                    "updatePoints" -> {
+                        val pointsJson = call.argument<String>("pointsJson") ?: "[]"
+                        val activeId = call.argument<String>("activeId")
+                        updateOverlayPoints(pointsJson, activeId)
+                        result.success(null)
+                    }
+                    "updateDoorCodes" -> {
+                        val codesJson = call.argument<String>("codesJson") ?: "[]"
+                        updateOverlayDoorCodes(codesJson)
+                        result.success(null)
+                    }
+                    "clearOrderTarget" -> { clearOrderTarget(); result.success(null) }
+                    "setManualOrderTarget" -> {
+                        val lat = call.argument<Double>("latitude") ?: 0.0
+                        val lon = call.argument<Double>("longitude") ?: 0.0
+                        setManualOrderTarget(lat, lon)
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
             }
-            override fun onCancel(arguments: Any?) { overlayEventSink = null }
-        })
-        
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, OVERLAY_CHANNEL).setMethodCallHandler { call, result ->
-            when (call.method) {
-                "hasOverlayPermission" -> result.success(hasOverlayPermission())
-                "requestOverlayPermission" -> { requestOverlayPermission(); result.success(null) }
-                "hasAccessibilityPermission" -> result.success(hasAccessibilityPermission())
-                "openAccessibilitySettings" -> { openAccessibilitySettings(); result.success(null) }
-                "hasUsageAccess" -> result.success(ForegroundDetector.hasUsageAccess(this))
-                "openUsageAccessSettings" -> { openUsageAccessSettings(); result.success(null) }
-                "getForegroundPackage" -> result.success(ForegroundDetector.getForegroundPackage(this))
-                "startOverlay" -> result.success(startOverlayService())
-                "stopOverlay" -> result.success(stopOverlayService())
-                "isOverlayRunning" -> result.success(OverlayBridge.isOverlayRunning)
-                "updatePoints" -> { 
-                    val pointsJson = call.argument<String>("pointsJson") ?: "[]"
-                    val activeId = call.argument<String>("activeId")
-                    updateOverlayPoints(pointsJson, activeId)
-                    result.success(null) 
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, MOCK_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "isMockLocationEnabled" -> result.success(MockManager.isMockLocationEnabled(this))
+                    "openDeveloperSettings" -> { MockManager.openDeveloperSettings(this); result.success(null) }
+                    "isMockRunning" -> result.success(MockManager.isRunning())
+                    "startMock" -> {
+                        val lat = call.argument<Double>("latitude") ?: 0.0
+                        val lon = call.argument<Double>("longitude") ?: 0.0
+                        val acc = call.argument<Double>("accuracy") ?: 3.0
+                        val alt = call.argument<Double>("altitude") ?: 0.0
+                        val interval = call.argument<Int>("intervalMs") ?: 1000
+                        result.success(MockManager.start(this, lat, lon, acc, alt, interval.toLong()))
+                    }
+                    "updateMock" -> {
+                        val lat = call.argument<Double>("latitude") ?: 0.0
+                        val lon = call.argument<Double>("longitude") ?: 0.0
+                        val acc = call.argument<Double>("accuracy") ?: 3.0
+                        val alt = call.argument<Double>("altitude") ?: 0.0
+                        result.success(MockManager.update(this, lat, lon, acc, alt))
+                    }
+                    "stopMock" -> result.success(MockManager.stop(this))
+                    "forceResetMock" -> result.success(MockManager.forceReset(this))
+                    "getRealLocation" -> {
+                        val loc = MockManager.getRealLocation(this)
+                        if (loc != null) {
+                            result.success(mapOf(
+                                "latitude" to loc.latitude,
+                                "longitude" to loc.longitude,
+                                "accuracy" to loc.accuracy,
+                                "ageMs" to (System.currentTimeMillis() - loc.time)
+                            ))
+                        } else {
+                            result.success(null)
+                        }
+                    }
+                    // ===== Перехват заказа и краш-лог (для баннеров на главной) =====
+                    "getLastOrderTarget" -> result.success(OrderTargetStore.loadLast(this))
+                    "getLastCrash" -> result.success(CrashLogger.load(this))
+                    "clearCrash" -> { CrashLogger.clear(this); result.success(null) }
+                    // ===== Оффлайн-карты =====
+                    "startMapDownload" -> {
+                        val name = call.argument<String>("name") ?: "Регион"
+                        val south = call.argument<Double>("south") ?: 0.0
+                        val north = call.argument<Double>("north") ?: 0.0
+                        val west = call.argument<Double>("west") ?: 0.0
+                        val east = call.argument<Double>("east") ?: 0.0
+                        val minZoom = call.argument<Int>("minZoom") ?: 12
+                        val maxZoom = call.argument<Int>("maxZoom") ?: 17
+                        MapDownloadService.start(this, name, south, north, west, east, minZoom, maxZoom)
+                        result.success(null)
+                    }
+                    "getMapDownloadProgress" -> result.success(MapDownloadService.progressMap())
+                    "cancelMapDownload" -> { MapDownloadService.cancel(this); result.success(null) }
+                    "getDownloadedRegions" -> result.success(MapDownloadService.listRegions(this))
+                    "deleteDownloadedRegion" -> {
+                        val id = call.argument<String>("id") ?: ""
+                        MapDownloadService.deleteRegion(this, id)
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
                 }
-                "updateDoorCodes" -> { 
-                    val codesJson = call.argument<String>("codesJson") ?: "[]"
-                    updateOverlayDoorCodes(codesJson)
-                    result.success(null) 
-                }
-                "clearOrderTarget" -> { clearOrderTarget(); result.success(null) }
-                "setManualOrderTarget" -> { 
-                    val lat = call.argument<Double>("latitude") ?: 0.0
-                    val lon = call.argument<Double>("longitude") ?: 0.0
-                    setManualOrderTarget(lat, lon)
-                    result.success(null) 
-                }
-                else -> result.notImplemented()
             }
-        }
-        
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, MOCK_CHANNEL).setMethodCallHandler { call, result ->
-            when (call.method) {
-                "isMockLocationEnabled" -> result.success(MockManager.isMockLocationEnabled(this))
-                "openDeveloperSettings" -> { MockManager.openDeveloperSettings(this); result.success(null) }
-                "isMockRunning" -> result.success(MockManager.isRunning())
-                "startMock" -> { 
-                    val lat = call.argument<Double>("latitude") ?: 0.0
-                    val lon = call.argument<Double>("longitude") ?: 0.0
-                    val acc = call.argument<Double>("accuracy") ?: 3.0
-                    val alt = call.argument<Double>("altitude") ?: 0.0
-                    val interval = call.argument<Int>("intervalMs") ?: 1000
-                    result.success(MockManager.start(this, lat, lon, acc, alt, interval.toLong())) 
-                }
-                "updateMock" -> { 
-                    val lat = call.argument<Double>("latitude") ?: 0.0
-                    val lon = call.argument<Double>("longitude") ?: 0.0
-                    val acc = call.argument<Double>("accuracy") ?: 3.0
-                    val alt = call.argument<Double>("altitude") ?: 0.0
-                    result.success(MockManager.update(this, lat, lon, acc, alt)) 
-                }
-                "stopMock" -> result.success(MockManager.stop(this))
-                "forceResetMock" -> result.success(MockManager.forceReset(this))
-                "getRealLocation" -> { 
-                    val loc = MockManager.getRealLocation(this)
-                    if (loc != null) { 
-                        result.success(mapOf(
-                            "latitude" to loc.latitude, 
-                            "longitude" to loc.longitude, 
-                            "accuracy" to loc.accuracy, 
-                            "ageMs" to (System.currentTimeMillis() - loc.time)
-                        )) 
-                    } else { 
-                        result.success(null) 
-                    } 
-                }
-                else -> result.notImplemented()
-            }
-        }
-        
+
         OverlayBridge.onOverlayStateChanged { handler.post { sendOverlayState() } }
     }
 
     private fun sendOverlayState() {
-        if (overlayEventSink != null) { 
+        if (overlayEventSink != null) {
             overlayEventSink?.success(mapOf(
-                "isRunning" to OverlayBridge.isOverlayRunning, 
+                "isRunning" to OverlayBridge.isOverlayRunning,
                 "isForeground" to OverlayBridge.isTargetAppForeground
-            )) 
+            ))
         }
     }
 
-    private fun hasOverlayPermission(): Boolean = 
+    private fun hasOverlayPermission(): Boolean =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) Settings.canDrawOverlays(this) else true
 
-    private fun requestOverlayPermission() { 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) 
-            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:$packageName"))) 
+    private fun requestOverlayPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
+            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:$packageName")))
     }
 
     private fun hasAccessibilityPermission(): Boolean {
@@ -131,60 +175,60 @@ class MainActivity: FlutterActivity() {
         return enabled.split(':').any { it.equals(service, ignoreCase = true) }
     }
 
-    private fun openAccessibilitySettings() { 
-        startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) 
+    private fun openAccessibilitySettings() {
+        startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
     }
 
-    private fun openUsageAccessSettings() { 
-        startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) 
+    private fun openUsageAccessSettings() {
+        startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
     }
 
-    private fun startOverlayService(): Boolean { 
-        val intent = Intent(this, OverlayService::class.java).apply { 
-            action = OverlayService.ACTION_START 
+    private fun startOverlayService(): Boolean {
+        val intent = Intent(this, OverlayService::class.java).apply {
+            setAction(OverlayService.ACTION_START)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
-        return true 
+        return true
     }
 
-    private fun stopOverlayService(): Boolean { 
-        val intent = Intent(this, OverlayService::class.java).apply { 
-            action = OverlayService.ACTION_STOP 
+    private fun stopOverlayService(): Boolean {
+        val intent = Intent(this, OverlayService::class.java).apply {
+            setAction(OverlayService.ACTION_STOP)
         }
         startService(intent)
-        return true 
+        return true
     }
 
-    private fun updateOverlayPoints(pointsJson: String, activeId: String?) { 
-        val intent = Intent(this, OverlayService::class.java).apply { 
-            action = OverlayService.ACTION_UPDATE_POINTS
+    private fun updateOverlayPoints(pointsJson: String, activeId: String?) {
+        val intent = Intent(this, OverlayService::class.java).apply {
+            setAction(OverlayService.ACTION_UPDATE_POINTS)
             putExtra(OverlayService.EXTRA_POINTS_JSON, pointsJson)
-            if (activeId != null) putExtra(OverlayService.EXTRA_ACTIVE_ID, activeId) 
+            if (activeId != null) putExtra(OverlayService.EXTRA_ACTIVE_ID, activeId)
         }
-        startService(intent) 
+        startService(intent)
     }
 
-    private fun updateOverlayDoorCodes(codesJson: String) { 
-        val intent = Intent(this, OverlayService::class.java).apply { 
-            action = OverlayService.ACTION_UPDATE_DOOR_CODES
-            putExtra(OverlayService.EXTRA_DOOR_CODES_JSON, codesJson) 
+    private fun updateOverlayDoorCodes(codesJson: String) {
+        val intent = Intent(this, OverlayService::class.java).apply {
+            setAction(OverlayService.ACTION_UPDATE_DOOR_CODES)
+            putExtra(OverlayService.EXTRA_DOOR_CODES_JSON, codesJson)
         }
-        startService(intent) 
+        startService(intent)
     }
 
-    private fun clearOrderTarget() { 
-        val intent = Intent(this, OverlayService::class.java).apply { 
-            action = OverlayService.ACTION_ORDER_TARGET_CLEAR 
+    private fun clearOrderTarget() {
+        val intent = Intent(this, OverlayService::class.java).apply {
+            setAction(OverlayService.ACTION_ORDER_TARGET_CLEAR)
         }
-        startService(intent) 
+        startService(intent)
     }
 
-    private fun setManualOrderTarget(lat: Double, lon: Double) { 
-        val intent = Intent(this, OverlayService::class.java).apply { 
-            action = OverlayService.ACTION_ORDER_TARGET
+    private fun setManualOrderTarget(lat: Double, lon: Double) {
+        val intent = Intent(this, OverlayService::class.java).apply {
+            setAction(OverlayService.ACTION_ORDER_TARGET)
             putExtra(OverlayService.EXTRA_ORDER_LAT, lat)
-            putExtra(OverlayService.EXTRA_ORDER_LON, lon) 
+            putExtra(OverlayService.EXTRA_ORDER_LON, lon)
         }
-        startService(intent) 
+        startService(intent)
     }
 }
