@@ -16,6 +16,9 @@ object OverlayPrefs {
     private const val KEY_IS_RUNNING = "is_running"
     private const val KEY_SERVICE_ON = "is_service_on"
     private const val KEY_DOOR_CODES_JSON = "door_codes_json"
+    private const val KEY_HEADER_WIDTH_PCT = "header_width_pct"
+
+    private const val DEFAULT_HEADER_WIDTH_PCT = 65
 
     private fun prefs(ctx: Context): SharedPreferences =
         ctx.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -26,14 +29,6 @@ object OverlayPrefs {
 
     fun loadPoints(ctx: Context): String {
         return prefs(ctx).getString(KEY_POINTS_JSON, "[]") ?: "[]"
-    }
-
-    fun saveDoorCodes(ctx: Context, json: String) {
-        prefs(ctx).edit().putString(KEY_DOOR_CODES_JSON, json).apply()
-    }
-
-    fun loadDoorCodes(ctx: Context): String {
-        return prefs(ctx).getString(KEY_DOOR_CODES_JSON, "[]") ?: "[]"
     }
 
     fun saveActiveId(ctx: Context, id: String?) {
@@ -60,5 +55,21 @@ object OverlayPrefs {
 
     fun loadServiceOn(ctx: Context): Boolean {
         return prefs(ctx).getBoolean(KEY_SERVICE_ON, false)
+    }
+
+    fun saveDoorCodes(ctx: Context, json: String) {
+        prefs(ctx).edit().putString(KEY_DOOR_CODES_JSON, json).apply()
+    }
+
+    fun loadDoorCodes(ctx: Context): String {
+        return prefs(ctx).getString(KEY_DOOR_CODES_JSON, "[]") ?: "[]"
+    }
+
+    fun saveHeaderWidthPct(ctx: Context, pct: Int) {
+        prefs(ctx).edit().putInt(KEY_HEADER_WIDTH_PCT, pct.coerceIn(20, 100)).apply()
+    }
+
+    fun loadHeaderWidthPct(ctx: Context): Int {
+        return prefs(ctx).getInt(KEY_HEADER_WIDTH_PCT, DEFAULT_HEADER_WIDTH_PCT).coerceIn(20, 100)
     }
 }
