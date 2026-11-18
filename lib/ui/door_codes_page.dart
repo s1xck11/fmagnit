@@ -1,7 +1,10 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 import '../main.dart';
 import '../models/door_code.dart';
+import '../services/overlay_service.dart';
 import '../storage/door_code_storage.dart';
 
 class DoorCodesPage extends StatefulWidget {
@@ -13,6 +16,7 @@ class DoorCodesPage extends StatefulWidget {
 
 class _DoorCodesPageState extends State<DoorCodesPage> {
   final _storage = DoorCodeStorage();
+  final _overlay = OverlayService();
   List<DoorCode> _codes = [];
   bool _loading = true;
 
@@ -24,12 +28,25 @@ class _DoorCodesPageState extends State<DoorCodesPage> {
 
   Future<void> _load() async {
     final list = await _storage.loadAll();
+    await _pushToOverlay(list);
     if (!mounted) return;
     setState(() {
       _codes = list
         ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
       _loading = false;
     });
+  }
+
+  /// Отправляет коды в оверлей, но только если он реально запущен,
+  /// чтобы не поднимать сервис лишний раз.
+  Future<void> _pushToOverlay(List<DoorCode> list) async {
+    try {
+      final running = await _overlay.isOverlayRunning();
+      if (!running) return;
+      await _overlay.updateDoorCodes(
+        codesJson: jsonEncode(list.map((c) => c.toJson()).toList()),
+      );
+    } catch (_) {}
   }
 
   Future<void> _addOrEdit([DoorCode? initial]) async {
@@ -108,10 +125,7 @@ class _DoorCodesPageState extends State<DoorCodesPage> {
   }
 
   void _snack(String msg) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg)),
-    );
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
   Widget _buildTile(DoorCode c) {
@@ -174,8 +188,7 @@ class _DoorCodesPageState extends State<DoorCodesPage> {
       ),
       body: _loading
           ? const Center(
-              child: CircularProgressIndicator(color: FMagnitTheme.accent),
-            )
+              child: CircularProgressIndicator(color: FMagnitTheme.accent))
           : _codes.isEmpty
               ? const Center(
                   child: Text(
