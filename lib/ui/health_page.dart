@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../main.dart';
+import '../services/mock_location_service.dart';
 import '../services/overlay_service.dart';
 import '../services/service_health.dart';
 
@@ -14,6 +15,7 @@ class HealthPage extends StatefulWidget {
 
 class _HealthPageState extends State<HealthPage> {
   final _overlay = OverlayService();
+  final _mock = MockLocationService();
 
   ServiceHealth? _health;
   bool _loading = true;
@@ -159,7 +161,7 @@ class _HealthPageState extends State<HealthPage> {
                   'Разрешение Mock Location',
                   'Выбор приложения для подмены в настройках разработчика',
                   h.mockPermission,
-                  onOpen: () => _overlay.openAccessibilitySettings(),
+                  onOpen: () => _mock.openDeveloperSettings(),
                 ),
                 _item(
                   'Разрешение «Поверх других окон»',
