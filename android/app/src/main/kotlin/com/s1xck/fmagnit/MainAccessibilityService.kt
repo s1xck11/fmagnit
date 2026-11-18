@@ -6,40 +6,36 @@ import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
+import android.widget.Toast
 
 /**
  * Две задачи:
  * 1) Поллинг UsageStats раз в 1 сек — определение foreground-пакета
  *    (работает на EMUI 12, где getWindows() заблокирован).
- * 2) Чтение экрана Магнита: на экране "Прибыть к клиенту" достаём адрес
- *    заказа и передаём в OrderCapture (геокод + заказ-таргет).
+ * 2) РУЧНОЕ чтение экрана Магнита по кнопке из оверлея:
+ *    собираем тексты -> ищем адрес -> OrderCapture (геокод + таргет).
+ *    При неудаче — дамп в CrashLogger (баннер "Краш" на главной).
+ *
+ * Автоперехват выключен: читаем только по кнопке.
  */
 class MainAccessibilityService : AccessibilityService() {
 
     private val handler = Handler(Looper.getMainLooper())
     private var pollRunnable: Runnable? = null
-
-    private var scanRunnable: Runnable? = null
     private var lastEventSource: AccessibilityNodeInfo? = null
-    private var lastDebugDump: String? = null
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val e = event ?: return
         val pkg = e.packageName?.toString() ?: return
         if (pkg != OverlayBridge.TARGET_PACKAGE) return
-
-        when (e.eventType) {
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
-            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
-            AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
-                try {
-                    val old = lastEventSource
-                    lastEventSource = e.source
-                    old?.recycle()
-                } catch (_: Throwable) {}
-                scheduleScan()
-            }
-        }
+        // Только запоминаем источник события как фолбэк-корень.
+        // Никакого автоскана.
+        try {
+            val old = lastEventSource
+            lastEventSource = e.source
+            old?.recycle()
+        } catch (_: Throwable) {}
     }
 
     override fun onInterrupt() {}
@@ -59,21 +55,23 @@ class MainAccessibilityService : AccessibilityService() {
             info.notificationTimeout = 100
             serviceInfo = info
         } catch (_: Exception) {}
+
+        OverlayBridge.scanHandler = { handler.post { scanScreen() } }
+
         startPolling()
         refreshTargetState()
     }
 
     override fun onDestroy() {
         stopPolling()
-        scanRunnable?.let { handler.removeCallbacks(it) }
-        scanRunnable = null
+        OverlayBridge.scanHandler = null
         try { lastEventSource?.recycle() } catch (_: Throwable) {}
         lastEventSource = null
         OverlayBridge.setTargetForeground(false)
         super.onDestroy()
     }
 
-    // ===================== FOREGROUND-ПОЛЛИНГ (как было) =====================
+    // ===================== FOREGROUND-ПОЛЛИНГ =====================
 
     private fun startPolling() {
         stopPolling()
@@ -104,23 +102,31 @@ class MainAccessibilityService : AccessibilityService() {
         OverlayBridge.setTargetForeground(pkg == target)
     }
 
-    // ===================== ЧТЕНИЕ ЭКРАНА ЗАКАЗА =====================
-
-    private fun scheduleScan() {
-        scanRunnable?.let { handler.removeCallbacks(it) }
-        val r = Runnable { scanScreen() }
-        scanRunnable = r
-        handler.postDelayed(r, 600)
-    }
+    // ===================== РУЧНОЕ ЧТЕНИЕ ЭКРАНА =====================
 
     private fun scanScreen() {
+        val sb = StringBuilder()
         try {
-            var root: AccessibilityNodeInfo? = null
-            try { root = rootInActiveWindow } catch (_: Throwable) {}
+            val roots = ArrayList<AccessibilityNodeInfo>()
 
-            // Фолбэк: поднимаемся от узла события к корню,
-            // если rootInActiveWindow вдруг null.
-            if (root == null) {
+            try { rootInActiveWindow?.let { roots.add(it) } } catch (_: Throwable) {}
+            sb.append("rootInActiveWindow=").append(roots.size).append('\n')
+
+            try {
+                var winCount = 0
+                for (w in windows) {
+                    winCount++
+                    if (w.type == AccessibilityWindowInfo.TYPE_APPLICATION) {
+                        val r = try { w.root } catch (_: Throwable) { null }
+                        if (r != null) roots.add(r)
+                    }
+                }
+                sb.append("windows=").append(winCount).append('\n')
+            } catch (e: Throwable) {
+                sb.append("windows_error=").append(e.toString()).append('\n')
+            }
+
+            if (roots.isEmpty()) {
                 val src = lastEventSource
                 if (src != null) {
                     try { src.refresh() } catch (_: Throwable) {}
@@ -131,46 +137,66 @@ class MainAccessibilityService : AccessibilityService() {
                         n = p
                         guard++
                     }
-                    root = n
+                    if (n != null) roots.add(n)
                 }
+                sb.append("eventSourceFallback=").append(roots.size).append('\n')
             }
-            if (root == null) return
 
-            val texts = ArrayList<String>(64)
-            collectTexts(root, texts, 0)
-
-            if (!isCustomerScreen(texts)) return
-
-            val address = extractAddress(texts)
-            if (address == null) {
-                // Дамп для отладки: увидишь в баннере "Краш" на главной.
-                val dump = texts.joinToString(" | ").take(4000)
-                if (dump != lastDebugDump) {
-                    lastDebugDump = dump
-                    CrashLogger.logMessage(applicationContext, "capture_debug", dump)
-                }
+            if (roots.isEmpty()) {
+                finishDebug(
+                    sb.toString(),
+                    "Не вижу экран. Выключи и включи fmagnit в спецвозможностях."
+                )
                 return
             }
 
-            OrderCapture.process(applicationContext, address)
-        } catch (_: Throwable) {}
+            val texts = ArrayList<String>(128)
+            val classes = ArrayList<String>(64)
+            for (r in roots) collect(r, texts, classes, 0)
+
+            sb.append("texts=").append(texts.size).append('\n')
+            sb.append("classes=").append(classes.distinct().take(12).joinToString(",")).append('\n')
+
+            if (texts.isEmpty()) {
+                finishDebug(
+                    sb.toString(),
+                    "Экран виден, но текстов нет. Дамп в баннере Краш."
+                )
+                return
+            }
+
+            val address = extractAddress(texts)
+            if (address == null) {
+                sb.append(texts.joinToString(" | ").take(3500))
+                finishDebug(sb.toString(), "Адрес не распознан. Дамп в баннере Краш.")
+                return
+            }
+
+            Toast.makeText(applicationContext, "Адрес: $address", Toast.LENGTH_LONG).show()
+            OrderCapture.process(applicationContext, address, force = true)
+        } catch (e: Throwable) {
+            finishDebug(sb.toString() + "\n" + e.toString(), "Ошибка чтения: ${e.message}")
+        }
     }
 
-    private fun collectTexts(node: AccessibilityNodeInfo?, out: ArrayList<String>, depth: Int) {
-        if (node == null || depth > 30 || out.size > 500) return
+    private fun collect(
+        node: AccessibilityNodeInfo?,
+        texts: ArrayList<String>,
+        classes: ArrayList<String>,
+        depth: Int
+    ) {
+        if (node == null || depth > 30 || texts.size > 500) return
         try {
+            val cn = node.className?.toString() ?: ""
+            if (cn.isNotEmpty() && classes.size < 200) classes.add(cn)
             val t = node.text?.toString()?.trim()
-            if (!t.isNullOrEmpty()) out.add(t)
+            if (!t.isNullOrEmpty()) texts.add(t)
             val cd = node.contentDescription?.toString()?.trim()
-            if (!cd.isNullOrEmpty() && cd != t) out.add(cd)
+            if (!cd.isNullOrEmpty() && cd != t) texts.add(cd)
             for (i in 0 until node.childCount) {
-                collectTexts(node.getChild(i), out, depth + 1)
+                collect(node.getChild(i), texts, classes, depth + 1)
             }
         } catch (_: Throwable) {}
-    }
-
-    private fun isCustomerScreen(texts: List<String>): Boolean {
-        return texts.any { it == "Прибыть к клиенту" || it == "К клиенту" }
     }
 
     private fun extractAddress(texts: List<String>): String? {
@@ -189,5 +215,12 @@ class MainAccessibilityService : AccessibilityService() {
             }
         }
         return null
+    }
+
+    private fun finishDebug(dump: String, toast: String) {
+        try {
+            CrashLogger.logMessage(applicationContext, "capture_debug", dump)
+        } catch (_: Throwable) {}
+        Toast.makeText(applicationContext, toast, Toast.LENGTH_LONG).show()
     }
 }
