@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../main.dart';
 import '../models/door_code.dart';
@@ -80,6 +81,54 @@ class _DoorCodesPageState extends State<DoorCodesPage> {
     if (ok != true) return;
     await _storage.delete(c.id);
     await _load();
+  }
+
+  Future<void> _exportCodes() async {
+    final list = await _storage.loadAll();
+    if (!mounted) return;
+    if (list.isEmpty) {
+      _snack('Нет кодов для экспорта');
+      return;
+    }
+    final json = const JsonEncoder.withIndent('  ')
+        .convert(list.map((c) => c.toJson()).toList());
+    await showDialog<void>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Экспорт кодов'),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 320,
+          child: SingleChildScrollView(
+            child: SelectableText(
+              json,
+              style: const TextStyle(
+                fontSize: 11,
+                fontFamily: 'monospace',
+                color: FMagnitTheme.textPrimary,
+              ),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: json));
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('JSON скопирован')),
+                );
+              }
+            },
+            child: const Text('Копировать'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Закрыть'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _importFromJson() async {
@@ -179,6 +228,11 @@ class _DoorCodesPageState extends State<DoorCodesPage> {
       appBar: AppBar(
         title: const Text('Коды домофонов'),
         actions: [
+          IconButton(
+            onPressed: _exportCodes,
+            icon: const Icon(Icons.file_upload_outlined),
+            tooltip: 'Экспорт',
+          ),
           IconButton(
             onPressed: _importFromJson,
             icon: const Icon(Icons.file_download_outlined),
