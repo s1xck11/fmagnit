@@ -8,12 +8,10 @@ import java.util.Locale
 import kotlin.math.abs
 
 /**
- * Прозрачный трамплин без UI.
- * Ловит интенты карт от курьерского приложения (мы теперь пакет 2ГИС):
- * geo:, dgis://, ссылки 2gis / google maps, google.navigation:, SEND text, extras.
- * Парсит координаты (оба порядка), сохраняет заказ-таргет, пинает оверлей.
- * Если координат нет, но есть текстовый адрес — геокодит через OrderCapture.
- * Каждый интент логируется в CrashLogger (тег order_intent) для отладки.
+ * Прозрачный трамплин без UI в собственной задаче (singleInstance).
+ * Ловит интенты карт от курьерки (мы пакет 2ГИС), парсит координаты,
+ * сохраняет таргет, пинает оверлей и УДАЛЯЕТ свою задачу,
+ * чтобы foreground вернулся курьерскому приложению.
  */
 class OrderIntentActivity : Activity() {
 
@@ -24,7 +22,7 @@ class OrderIntentActivity : Activity() {
         } catch (e: Throwable) {
             CrashLogger.log(this, "order_intent", e)
         }
-        finish()
+        finishSmart()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -34,7 +32,26 @@ class OrderIntentActivity : Activity() {
         } catch (e: Throwable) {
             CrashLogger.log(this, "order_intent", e)
         }
-        finish()
+        finishSmart()
+    }
+
+    private fun finishSmart() {
+        try {
+            if (isTaskRoot) {
+                finishAndRemoveTask()
+            } else {
+                finish()
+                // Страховка: если оказались внутри чужой задачи —
+                // возвращаем курьерку на передний план без сброса её стека.
+                val li = packageManager.getLaunchIntentForPackage(OverlayBridge.TARGET_PACKAGE)
+                if (li != null) {
+                    li.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    startActivity(li)
+                }
+            }
+        } catch (_: Throwable) {
+            finish()
+        }
     }
 
     private fun handle(i: Intent?) {
@@ -130,7 +147,6 @@ class OrderIntentActivity : Activity() {
         return null
     }
 
-    /** Универсальный парсер пары чисел; сам лечит перепутанный порядок. */
     private fun parsePair(raw: String?, lonFirst: Boolean): Pair<Double, Double>? {
         if (raw.isNullOrBlank()) return null
         val m = Regex("(-?\\d{1,3}(?:\\.\\d+)?)\\s*,\\s*(-?\\d{1,3}(?:\\.\\d+)?)")
