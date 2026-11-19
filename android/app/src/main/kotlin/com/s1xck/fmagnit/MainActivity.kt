@@ -23,7 +23,6 @@ class MainActivity : FlutterActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Android 13+: без этого разрешения уведомление foreground-сервиса не показывается
         if (Build.VERSION.SDK_INT >= 33) {
             if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
                 PackageManager.PERMISSION_GRANTED
@@ -79,6 +78,19 @@ class MainActivity : FlutterActivity() {
                         setManualOrderTarget(lat, lon)
                         result.success(null)
                     }
+                    "getHeaderWidthPct" -> result.success(OverlayPrefs.loadHeaderWidthPct(this))
+                    "setHeaderWidthPct" -> {
+                        val pct = (call.argument<Int>("pct") ?: 65).coerceIn(20, 100)
+                        OverlayPrefs.saveHeaderWidthPct(this, pct)
+                        if (OverlayBridge.isOverlayRunning) {
+                            val intent = Intent(this, OverlayService::class.java).apply {
+                                setAction(OverlayService.ACTION_SET_HEADER_WIDTH)
+                                putExtra(OverlayService.EXTRA_HEADER_WIDTH_PCT, pct)
+                            }
+                            startService(intent)
+                        }
+                        result.success(null)
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -119,11 +131,9 @@ class MainActivity : FlutterActivity() {
                             result.success(null)
                         }
                     }
-                    // ===== Перехват заказа и краш-лог (для баннеров на главной) =====
                     "getLastOrderTarget" -> result.success(OrderTargetStore.loadLast(this))
                     "getLastCrash" -> result.success(CrashLogger.load(this))
                     "clearCrash" -> { CrashLogger.clear(this); result.success(null) }
-                    // ===== Оффлайн-карты =====
                     "startMapDownload" -> {
                         val name = call.argument<String>("name") ?: "Регион"
                         val south = call.argument<Double>("south") ?: 0.0
