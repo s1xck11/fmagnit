@@ -68,9 +68,7 @@ class OverlayService {
   }
 
   Future<void> updateDoorCodes({required String codesJson}) async {
-    await _channel.invokeMethod('updateDoorCodes', {
-      'codesJson': codesJson,
-    });
+    await _channel.invokeMethod('updateDoorCodes', {'codesJson': codesJson});
   }
 
   Future<void> clearOrderTarget() async {
@@ -85,6 +83,15 @@ class OverlayService {
       'latitude': latitude,
       'longitude': longitude,
     });
+  }
+
+  Future<int> getHeaderWidthPct() async {
+    final r = await _channel.invokeMethod<int>('getHeaderWidthPct');
+    return r ?? 65;
+  }
+
+  Future<void> setHeaderWidthPct(int pct) async {
+    await _channel.invokeMethod('setHeaderWidthPct', {'pct': pct});
   }
 
   void setStartHandler(Future<void> Function(String id) handler) {
