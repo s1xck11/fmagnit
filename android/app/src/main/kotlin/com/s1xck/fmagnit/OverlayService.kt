@@ -783,11 +783,8 @@ class OverlayService : Service() {
     // ===================== КАРТА =====================
 
     private fun createMapView(): MapView {
-        val ctx = this
-        val map = MapView(ctx)
+        val map = DarkTileProvider.createMapView(this)
         try {
-            map.setTileSource(DarkTileSource)
-            map.setBackgroundColor(COLOR_MAP_BG)
             map.setUseDataConnection(true)
             map.setMultiTouchControls(true)
             map.controller.setZoom(17.0)
@@ -1141,7 +1138,7 @@ class OverlayService : Service() {
 
             // Attribution обязателен и виден без взаимодействий (лицензия тайлов)
             val attr = TextView(ctx).apply {
-                text = "© OpenStreetMap contributors · © CARTO"
+                text = "© OpenStreetMap contributors"
                 setTextColor(0xFFBDBDBD.toInt())
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
                 setPadding(dp(6), dp(3), dp(6), dp(3))
