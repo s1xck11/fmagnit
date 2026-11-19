@@ -1,7 +1,7 @@
 package com.s1xck.fmagnit
 
 object OverlayBridge {
-    // Пакет Магнита, за которым следит служба (если он у тебя другой, поменяй строку)
+    // Пакет Магнита, за которым следит служба
     const val TARGET_PACKAGE = "com.magnit.delivery.courier"
 
     @Volatile
@@ -13,11 +13,6 @@ object OverlayBridge {
         private set
 
     private var stateChangeListener: (() -> Unit)? = null
-
-    // Хендлер ручного чтения экрана: ставит AccessibilityService,
-    // дёргает кнопка в оверлее.
-    @Volatile
-    var scanHandler: (() -> Unit)? = null
 
     fun setOverlayRunning(running: Boolean) {
         if (isOverlayRunning != running) {
@@ -39,12 +34,5 @@ object OverlayBridge {
 
     fun notifyStateChanged() {
         stateChangeListener?.invoke()
-    }
-
-    /** true = команда чтения ушла в службу спецвозможностей. */
-    fun requestScreenScan(): Boolean {
-        val h = scanHandler ?: return false
-        h.invoke()
-        return true
     }
 }
