@@ -42,11 +42,13 @@
             </intent-filter>
         </activity>
 
-        <!-- Трамплин: ловит интенты карт от курьерки, парсит координаты, сразу закрывается -->
+        <!-- Трамплин в СОБСТВЕННОЙ задаче: после обработки задача удаляется,
+             foreground возвращается курьерке, карта-оверлей висит поверх неё -->
         <activity
             android:name=".OrderIntentActivity"
             android:exported="true"
-            android:launchMode="singleTop"
+            android:launchMode="singleInstance"
+            android:taskAffinity="com.s1xck.fmagnit.orderintent"
             android:noHistory="true"
             android:excludeFromRecents="true"
             android:theme="@android:style/Theme.Translucent.NoTitleBar">
