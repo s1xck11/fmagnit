@@ -20,6 +20,8 @@ class _HealthPageState extends State<HealthPage> {
   ServiceHealth? _health;
   bool _loading = true;
 
+  double _widthPct = 65;
+
   static const String _emuiInstructions = '''
 Как сделать, чтобы fmagnit не вырубался на Huawei (EMUI 12):
 
@@ -59,6 +61,7 @@ class _HealthPageState extends State<HealthPage> {
   void initState() {
     super.initState();
     _refresh();
+    _loadWidth();
   }
 
   Future<void> _refresh() async {
@@ -69,6 +72,14 @@ class _HealthPageState extends State<HealthPage> {
       _health = h;
       _loading = false;
     });
+  }
+
+  Future<void> _loadWidth() async {
+    final v = await _overlay.getHeaderWidthPct();
+    if (!mounted) return;
+    // clamp возвращает num — приводим к double явно
+    final pct = v.toDouble().clamp(20.0, 100.0).toDouble();
+    setState(() => _widthPct = pct);
   }
 
   Future<void> _copyInstructions() async {
@@ -136,6 +147,80 @@ class _HealthPageState extends State<HealthPage> {
     );
   }
 
+  Widget _widthCard() {
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: FMagnitTheme.card,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.tune, color: FMagnitTheme.accent, size: 22),
+              SizedBox(width: 8),
+              Text(
+                'Оверлей',
+                style: TextStyle(
+                  color: FMagnitTheme.textPrimary,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 15,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Ширина свёрнутой шапки',
+                  style: TextStyle(
+                    color: FMagnitTheme.textPrimary,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+              Text(
+                '${_widthPct.round()}%',
+                style: const TextStyle(
+                  color: FMagnitTheme.accent,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+          Semantics(
+            label: 'Ширина свёрнутой шапки оверлея в процентах',
+            slider: true,
+            child: Slider(
+              value: _widthPct,
+              min: 20,
+              max: 100,
+              divisions: 16,
+              label: '${_widthPct.round()}%',
+              activeColor: FMagnitTheme.accent,
+              inactiveColor: FMagnitTheme.inactive,
+              onChanged: (v) => setState(() => _widthPct = v),
+              onChangeEnd: (v) => _overlay.setHeaderWidthPct(v.round()),
+            ),
+          ),
+          const Text(
+            '20–100%, шаг 5%. Применяется к шапке сразу, даже при запущенном оверлее.',
+            style: TextStyle(
+              color: FMagnitTheme.textMuted,
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final h = _health;
@@ -143,7 +228,7 @@ class _HealthPageState extends State<HealthPage> {
     return Scaffold(
       backgroundColor: FMagnitTheme.bg,
       appBar: AppBar(
-        title: const Text('Здоровье сервисов'),
+        title: const Text('Настройки и здоровье'),
         actions: [
           IconButton(
             onPressed: _refresh,
@@ -157,6 +242,8 @@ class _HealthPageState extends State<HealthPage> {
           : ListView(
               padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
               children: [
+                _widthCard(),
+                const SizedBox(height: 8),
                 _item(
                   'Разрешение Mock Location',
                   'Выбор приложения для подмены в настройках разработчика',
