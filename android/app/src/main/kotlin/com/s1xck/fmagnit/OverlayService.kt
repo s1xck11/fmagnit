@@ -59,8 +59,8 @@ import kotlin.math.sqrt
  * bg #121212, surface #202020, border #2E2E2E, fg #FFFFFF,
  * muted #9E9E9E, accent #E30613, success #00C853.
  * Touch-targets 48dp, зазоры 8dp, guard двойных тапов 400 мс.
- * Карта: MapKit (night mode) при наличии ключа, иначе OSM fallback.
- * Нижние углы карты свободны под лого Яндекса (тап ведёт на сайт Яндекса).
+ * Карта: провайдер из настроек (auto / osm / yandex).
+ * Нижние углы карты свободны под лого Яндекса / attribution OSM.
  */
 class OverlayService : Service() {
 
@@ -1022,10 +1022,18 @@ class OverlayService : Service() {
             headerArrow?.text = "▾"
             removeContentWindow()
 
-            val ym = MapKitHub.createMapView(this, true)
+            val provider = OverlayPrefs.loadMapProvider(this)
+            val ym = if (provider == "osm") null else MapKitHub.createMapView(this, true)
             if (ym != null) {
                 buildYandexMapWindow(ym, lat, lon)
             } else {
+                if (provider == "yandex") {
+                    Toast.makeText(
+                        this,
+                        "Яндекс недоступен (ключ/инициализация). Открыл OSM.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
                 buildOsmMapWindow(lat, lon)
             }
         } catch (e: Throwable) {
@@ -1063,7 +1071,7 @@ class OverlayService : Service() {
 
         val container = FrameLayout(ctx)
         container.addView(ym, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        addMapControls(container, isYandex = true)
+        addMapControls(container)
 
         val wrapper = mapWrapper(container)
         addMapWindow(wrapper)
@@ -1149,7 +1157,7 @@ class OverlayService : Service() {
 
         val container = FrameLayout(ctx)
         container.addView(map, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        addMapControls(container, isYandex = false)
+        addMapControls(container)
 
         val attr = TextView(ctx).apply {
             text = "© OpenStreetMap contributors"
@@ -1169,7 +1177,7 @@ class OverlayService : Service() {
     }
 
     /** Контролы по краям, НИЗ свободен под лого Яндекса / attribution OSM. */
-    private fun addMapControls(container: FrameLayout, isYandex: Boolean) {
+    private fun addMapControls(container: FrameLayout) {
         val ctx = this
 
         val closeBtn = TextView(ctx).apply {
