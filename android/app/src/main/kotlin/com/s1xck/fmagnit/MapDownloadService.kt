@@ -15,6 +15,7 @@ import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import org.osmdroid.tileprovider.cachemanager.CacheManager
+import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.BoundingBox
 import org.osmdroid.views.MapView
 import java.util.concurrent.atomic.AtomicBoolean
@@ -211,7 +212,7 @@ class MapDownloadService : Service() {
                 try {
                     if (mapView == null) {
                         mapView = MapView(applicationContext).apply {
-                            setTileSource(DarkTileSource)
+                            setTileSource(TileSourceFactory.MAPNIK)
                             setUseDataConnection(true)
                         }
                     }
