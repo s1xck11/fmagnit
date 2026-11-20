@@ -42,9 +42,10 @@ import org.json.JSONObject
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
-import org.osmdroid.views.MapView
+import org.osmdroid.views.MapView as OsmMapView
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.gestures.RotationGestureOverlay
+import com.yandex.mapkit.mapview.MapView as YandexMapView
 import java.io.File
 import java.util.Locale
 import kotlin.math.asin
@@ -54,10 +55,12 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * Семантические токены тёмной темы интерфейса (карта светлая MAPNIK):
+ * Семантические токены тёмной темы интерфейса:
  * bg #121212, surface #202020, border #2E2E2E, fg #FFFFFF,
  * muted #9E9E9E, accent #E30613, success #00C853.
  * Touch-targets 48dp, зазоры 8dp, guard двойных тапов 400 мс.
+ * Карта: MapKit (night mode) при наличии ключа, иначе OSM fallback.
+ * Нижние углы карты свободны под лого Яндекса (тап ведёт на сайт Яндекса).
  */
 class OverlayService : Service() {
 
@@ -130,7 +133,8 @@ class OverlayService : Service() {
 
     private val handler = Handler(Looper.getMainLooper())
 
-    private var fullMap: MapView? = null
+    private var yandexMap: YandexMapView? = null
+    private var osmMap: OsmMapView? = null
     private var fullMapWrapper: View? = null
     private var fullMapLayoutParams: WindowManager.LayoutParams? = null
     private var resetNorthButton: TextView? = null
@@ -795,120 +799,54 @@ class OverlayService : Service() {
         return c
     }
 
-    // ===================== КАРТА =====================
+    // ===================== ИКОНКИ МЕТОК =====================
 
-    private fun createMapView(): MapView {
-        val ctx = this
-        val map = MapView(ctx)
-        try {
-            map.setTileSource(TileSourceFactory.MAPNIK)
-            map.setBuiltInZoomControls(false)
-            map.setUseDataConnection(true)
-            map.setMultiTouchControls(true)
-            map.controller.setZoom(17.0)
-            map.invalidate()
-        } catch (_: Throwable) {}
-        return map
+    private fun waypointIcon(): Bitmap? {
+        val sizePx = dp(28)
+        val square = TextView(this).apply {
+            text = "М"
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            background = roundedBg(COLOR_MARKER_BG, 6)
+            width = sizePx; height = sizePx
+        }
+        return viewToBitmap(square, sizePx, sizePx)
     }
 
-    private fun addOrderMarker(map: MapView, lat: Double, lon: Double) {
-        try {
-            val marker = Marker(map)
-            marker.position = GeoPoint(lat, lon)
-            marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-            marker.title = "Заказ"
-            map.overlays.add(marker)
-        } catch (_: Throwable) {}
+    private fun waypointPlate(name: String): Bitmap? {
+        if (name.isEmpty()) return null
+        val plate = TextView(this).apply {
+            text = name
+            setTextColor(COLOR_PLATE_TEXT)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            setPadding(dp(6), dp(2), dp(6), dp(2))
+            background = roundedBg(COLOR_PLATE_BG, 4)
+            maxLines = 1
+        }
+        return viewToBitmap(plate, dp(140), dp(22), exactWidth = false)
     }
 
-    private fun addWaypointMarker(map: MapView, lat: Double, lon: Double, name: String) {
-        try {
-            val marker = Marker(map)
-            marker.position = GeoPoint(lat, lon)
-            marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-            marker.setOnMarkerClickListener { _, _ -> true }
-
-            val sizePx = dp(28)
-            val square = TextView(this).apply {
-                text = "М"
-                setTextColor(Color.WHITE)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-                setTypeface(typeface, Typeface.BOLD)
-                gravity = Gravity.CENTER
-                background = roundedBg(COLOR_MARKER_BG, 6)
-                width = sizePx; height = sizePx
-            }
-
-            val bmp = viewToBitmap(square, sizePx, sizePx)
-            if (bmp != null) {
-                marker.icon = BitmapDrawable(resources, bmp)
-                map.overlays.add(marker)
-            }
-
-            if (name.isNotEmpty()) {
-                val label = Marker(map)
-                label.position = GeoPoint(lat, lon)
-                label.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_TOP)
-                label.setOnMarkerClickListener { _, _ -> true }
-
-                val plate = TextView(this).apply {
-                    text = name
-                    setTextColor(COLOR_PLATE_TEXT)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-                    setPadding(dp(6), dp(2), dp(6), dp(2))
-                    background = roundedBg(COLOR_PLATE_BG, 4)
-                    maxLines = 1
-                }
-                val bmpLabel = viewToBitmap(plate, dp(140), dp(22), exactWidth = false)
-                if (bmpLabel != null) {
-                    label.icon = BitmapDrawable(resources, bmpLabel)
-                    map.overlays.add(label)
-                }
-            }
-        } catch (_: Throwable) {}
+    private fun myLocationIcon(): Bitmap? {
+        val sizePx = dp(24)
+        val view = TextView(this).apply {
+            background = roundedBg(COLOR_MY_LOCATION, 12)
+            width = sizePx; height = sizePx
+        }
+        return viewToBitmap(view, sizePx, sizePx)
     }
 
-    private fun addMyLocationMarker(map: MapView, lat: Double, lon: Double) {
-        try {
-            val marker = Marker(map)
-            marker.position = GeoPoint(lat, lon)
-            marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-            marker.setOnMarkerClickListener { _, _ -> true }
-
-            val sizePx = dp(24)
-            val view = TextView(this).apply {
-                background = roundedBg(COLOR_MY_LOCATION, 12)
-                width = sizePx; height = sizePx
-            }
-            val bmp = viewToBitmap(view, sizePx, sizePx)
-            if (bmp != null) {
-                marker.icon = BitmapDrawable(resources, bmp)
-                map.overlays.add(marker)
-            }
-        } catch (_: Throwable) {}
-    }
-
-    private fun addDoorCodeMarker(map: MapView, lat: Double, lon: Double, code: String) {
-        try {
-            val marker = Marker(map)
-            marker.position = GeoPoint(lat, lon)
-            marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-            marker.setOnMarkerClickListener { _, _ -> true }
-
-            val view = TextView(this).apply {
-                text = "Ключ $code"
-                setTextColor(Color.WHITE)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setTypeface(typeface, Typeface.BOLD)
-                setPadding(dp(8), dp(4), dp(8), dp(4))
-                background = roundedBg(COLOR_SUCCESS, 8)
-            }
-            val bmp = viewToBitmap(view, dp(120), dp(30), exactWidth = false)
-            if (bmp != null) {
-                marker.icon = BitmapDrawable(resources, bmp)
-                map.overlays.add(marker)
-            }
-        } catch (_: Throwable) {}
+    private fun doorIcon(code: String): Bitmap? {
+        val view = TextView(this).apply {
+            text = "Ключ $code"
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+            background = roundedBg(COLOR_SUCCESS, 8)
+        }
+        return viewToBitmap(view, dp(120), dp(30), exactWidth = false)
     }
 
     private fun viewToBitmap(view: View, widthPx: Int, heightPx: Int, exactWidth: Boolean = true): Bitmap? {
@@ -1084,169 +1022,286 @@ class OverlayService : Service() {
             headerArrow?.text = "▾"
             removeContentWindow()
 
-            val ctx = this
-            fullMap = createMapView()
-            fullMap?.let { map ->
-                addOrderMarker(map, lat, lon)
-
-                val pts = parsePointsFullWithName(currentPointsJson)
-                pts.forEach { (_, name, pLat, pLon, _) -> addWaypointMarker(map, pLat, pLon, name) }
-
-                try {
-                    val myLoc = getCurrentLocation()
-                    if (myLoc != null) addMyLocationMarker(map, myLoc.latitude, myLoc.longitude)
-                } catch (_: Throwable) {}
-
-                val nearbyDoors = findNearbyDoorCodes(lat, lon)
-                if (nearbyDoors.isNotEmpty()) {
-                    val bestDoor = nearbyDoors.first()
-                    addDoorCodeMarker(map, bestDoor.lat, bestDoor.lon, bestDoor.code)
-                }
-
-                try {
-                    val rotation = RotationGestureOverlay(map)
-                    rotation.isEnabled = true
-                    map.overlays.add(rotation)
-                } catch (_: Throwable) {}
-
-                map.controller.setCenter(GeoPoint(lat, lon))
-                map.controller.setZoom(17.0)
-                map.invalidate()
+            val ym = MapKitHub.createMapView(this, true)
+            if (ym != null) {
+                buildYandexMapWindow(ym, lat, lon)
+            } else {
+                buildOsmMapWindow(lat, lon)
             }
-
-            val container = FrameLayout(ctx)
-            fullMap?.let {
-                container.addView(it, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-            }
-
-            val closeBtn = TextView(ctx).apply {
-                text = "×"
-                setTextColor(COLOR_FG)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
-                gravity = Gravity.CENTER
-                background = pressableBg(COLOR_ACCENT, 24)
-                contentDescription = "Закрыть карту"
-                setOnClickListener(guarded { closeFullMap() })
-            }
-            container.addView(closeBtn, FrameLayout.LayoutParams(dp(TOUCH_DP), dp(TOUCH_DP)).apply {
-                gravity = Gravity.TOP or Gravity.END
-                topMargin = dp(12); rightMargin = dp(12)
-            })
-
-            val north = TextView(ctx).apply {
-                text = "N"
-                setTextColor(COLOR_FG)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-                setTypeface(typeface, Typeface.BOLD)
-                gravity = Gravity.CENTER
-                background = pressableBg(COLOR_PILL, 24)
-                contentDescription = "Сбросить ориентацию карты на север"
-                visibility = View.GONE
-                setOnClickListener {
-                    fullMap?.mapOrientation = 0f
-                    fullMap?.invalidate()
-                    visibility = View.GONE
-                }
-            }
-            resetNorthButton = north
-            container.addView(north, FrameLayout.LayoutParams(dp(TOUCH_DP), dp(TOUCH_DP)).apply {
-                gravity = Gravity.TOP or Gravity.START
-                topMargin = dp(12); leftMargin = dp(12)
-            })
-
-            // Свои тёмные зум-кнопки 48dp справа снизу (встроенные белые убраны)
-            val zoomCol = LinearLayout(ctx).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER
-            }
-            val zoomOut = TextView(ctx).apply {
-                text = "−"
-                setTextColor(COLOR_FG)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
-                setTypeface(typeface, Typeface.BOLD)
-                gravity = Gravity.CENTER
-                background = pressableBg(COLOR_PILL, 12)
-                contentDescription = "Уменьшить масштаб"
-                setOnClickListener { fullMap?.controller?.zoomOut() }
-            }
-            val zoomIn = TextView(ctx).apply {
-                text = "+"
-                setTextColor(COLOR_FG)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
-                setTypeface(typeface, Typeface.BOLD)
-                gravity = Gravity.CENTER
-                background = pressableBg(COLOR_PILL, 12)
-                contentDescription = "Увеличить масштаб"
-                setOnClickListener { fullMap?.controller?.zoomIn() }
-            }
-            zoomCol.addView(zoomOut, LinearLayout.LayoutParams(dp(TOUCH_DP), dp(TOUCH_DP)).also { it.bottomMargin = dp(GAP_DP) })
-            zoomCol.addView(zoomIn, LinearLayout.LayoutParams(dp(TOUCH_DP), dp(TOUCH_DP)))
-            container.addView(zoomCol, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                gravity = Gravity.BOTTOM or Gravity.END
-                rightMargin = dp(12); bottomMargin = dp(12)
-            })
-
-            // Attribution обязателен и виден без взаимодействий (лицензия тайлов)
-            val attr = TextView(ctx).apply {
-                text = "© OpenStreetMap contributors"
-                setTextColor(0xFF444444.toInt())
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
-                setPadding(dp(6), dp(3), dp(6), dp(3))
-                background = roundedBg(0xB3FFFFFF.toInt(), 6)
-            }
-            container.addView(attr, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                gravity = Gravity.BOTTOM or Gravity.START
-                leftMargin = dp(10); bottomMargin = dp(10)
-            })
-
-            val ticker = object : Runnable {
-                override fun run() {
-                    try {
-                        val m = fullMap ?: return
-                        resetNorthButton?.visibility = if (Math.abs(m.mapOrientation) > 1f) View.VISIBLE else View.GONE
-                    } catch (_: Throwable) {}
-                    handler.postDelayed(this, 300L)
-                }
-            }
-            orientationTicker = ticker
-            handler.post(ticker)
-
-            val wrapper = LinearLayout(ctx).apply {
-                orientation = LinearLayout.VERTICAL
-                background = roundedBg(COLOR_BG, 16, COLOR_BORDER, 1)
-                setPadding(dp(8), dp(8), dp(8), dp(8))
-                addView(container, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-            }
-
-            val dm = resources.displayMetrics
-            val w = (dm.widthPixels * 0.92).toInt()
-            val h = (dm.heightPixels * 0.85).toInt()
-
-            fullMapLayoutParams = WindowManager.LayoutParams(
-                w, h, windowType(),
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-                PixelFormat.TRANSLUCENT
-            ).apply { gravity = Gravity.CENTER }
-
-            windowManager?.addView(wrapper, fullMapLayoutParams)
-            fullMapWrapper = wrapper
         } catch (e: Throwable) {
             CrashLogger.log(this, "openFullMap", e)
             closeFullMap()
         }
     }
 
+    private fun buildYandexMapWindow(ym: YandexMapView, lat: Double, lon: Double) {
+        val ctx = this
+        yandexMap = ym
+
+        try {
+            MapKitHub.placemark(ym.map, lat, lon)
+            val pts = parsePointsFullWithName(currentPointsJson)
+            val wIcon = waypointIcon()
+            pts.forEach { (_, name, pLat, pLon, _) ->
+                MapKitHub.placemark(ym.map, pLat, pLon, wIcon)
+                val plate = waypointPlate(name)
+                if (plate != null) MapKitHub.placemark(ym.map, pLat, pLon, plate)
+            }
+            try {
+                val myLoc = getCurrentLocation()
+                if (myLoc != null) MapKitHub.placemark(ym.map, myLoc.latitude, myLoc.longitude, myLocationIcon())
+            } catch (_: Throwable) {}
+            val nearby = findNearbyDoorCodes(lat, lon)
+            if (nearby.isNotEmpty()) {
+                val best = nearby.first()
+                MapKitHub.placemark(ym.map, best.lat, best.lon, doorIcon(best.code))
+            }
+            MapKitHub.camera(ym.map, lat, lon, 17f)
+        } catch (e: Throwable) {
+            CrashLogger.log(this, "yandex_map_objects", e)
+        }
+
+        val container = FrameLayout(ctx)
+        container.addView(ym, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        addMapControls(container, isYandex = true)
+
+        val wrapper = mapWrapper(container)
+        addMapWindow(wrapper)
+
+        MapKitHub.start()
+        try { ym.onStart() } catch (_: Throwable) {}
+        startOrientationTicker()
+    }
+
+    private fun buildOsmMapWindow(lat: Double, lon: Double) {
+        val ctx = this
+        val map = OsmMapView(ctx)
+        osmMap = map
+        try {
+            map.setTileSource(TileSourceFactory.MAPNIK)
+            map.setBuiltInZoomControls(false)
+            map.setUseDataConnection(true)
+            map.setMultiTouchControls(true)
+            map.controller.setZoom(17.0)
+
+            val order = Marker(map)
+            order.position = GeoPoint(lat, lon)
+            order.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+            order.title = "Заказ"
+            map.overlays.add(order)
+
+            val pts = parsePointsFullWithName(currentPointsJson)
+            val wIcon = waypointIcon()
+            pts.forEach { (_, name, pLat, pLon, _) ->
+                val m = Marker(map)
+                m.position = GeoPoint(pLat, pLon)
+                m.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                m.setOnMarkerClickListener { _, _ -> true }
+                if (wIcon != null) m.icon = BitmapDrawable(resources, wIcon)
+                map.overlays.add(m)
+                val plate = waypointPlate(name)
+                if (plate != null) {
+                    val lm = Marker(map)
+                    lm.position = GeoPoint(pLat, pLon)
+                    lm.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_TOP)
+                    lm.setOnMarkerClickListener { _, _ -> true }
+                    lm.icon = BitmapDrawable(resources, plate)
+                    map.overlays.add(lm)
+                }
+            }
+
+            try {
+                val myLoc = getCurrentLocation()
+                if (myLoc != null) {
+                    val mm = Marker(map)
+                    mm.position = GeoPoint(myLoc.latitude, myLoc.longitude)
+                    mm.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                    mm.setOnMarkerClickListener { _, _ -> true }
+                    val ic = myLocationIcon()
+                    if (ic != null) mm.icon = BitmapDrawable(resources, ic)
+                    map.overlays.add(mm)
+                }
+            } catch (_: Throwable) {}
+
+            val nearby = findNearbyDoorCodes(lat, lon)
+            if (nearby.isNotEmpty()) {
+                val best = nearby.first()
+                val dm = Marker(map)
+                dm.position = GeoPoint(best.lat, best.lon)
+                dm.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                dm.setOnMarkerClickListener { _, _ -> true }
+                val ic = doorIcon(best.code)
+                if (ic != null) dm.icon = BitmapDrawable(resources, ic)
+                map.overlays.add(dm)
+            }
+
+            try {
+                val rotation = RotationGestureOverlay(map)
+                rotation.isEnabled = true
+                map.overlays.add(rotation)
+            } catch (_: Throwable) {}
+
+            map.controller.setCenter(GeoPoint(lat, lon))
+            map.invalidate()
+        } catch (e: Throwable) {
+            CrashLogger.log(this, "osm_map_objects", e)
+        }
+
+        val container = FrameLayout(ctx)
+        container.addView(map, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        addMapControls(container, isYandex = false)
+
+        val attr = TextView(ctx).apply {
+            text = "© OpenStreetMap contributors"
+            setTextColor(0xFF444444.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+            setPadding(dp(6), dp(3), dp(6), dp(3))
+            background = roundedBg(0xB3FFFFFF.toInt(), 6)
+        }
+        container.addView(attr, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            gravity = Gravity.BOTTOM or Gravity.START
+            leftMargin = dp(10); bottomMargin = dp(10)
+        })
+
+        val wrapper = mapWrapper(container)
+        addMapWindow(wrapper)
+        startOrientationTicker()
+    }
+
+    /** Контролы по краям, НИЗ свободен под лого Яндекса / attribution OSM. */
+    private fun addMapControls(container: FrameLayout, isYandex: Boolean) {
+        val ctx = this
+
+        val closeBtn = TextView(ctx).apply {
+            text = "×"
+            setTextColor(COLOR_FG)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
+            gravity = Gravity.CENTER
+            background = pressableBg(COLOR_ACCENT, 24)
+            contentDescription = "Закрыть карту"
+            setOnClickListener(guarded { closeFullMap() })
+        }
+        container.addView(closeBtn, FrameLayout.LayoutParams(dp(TOUCH_DP), dp(TOUCH_DP)).apply {
+            gravity = Gravity.TOP or Gravity.END
+            topMargin = dp(12); rightMargin = dp(12)
+        })
+
+        val north = TextView(ctx).apply {
+            text = "N"
+            setTextColor(COLOR_FG)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            background = pressableBg(COLOR_PILL, 24)
+            contentDescription = "Сбросить ориентацию карты на север"
+            visibility = View.GONE
+            setOnClickListener {
+                yandexMap?.let { MapKitHub.resetNorth(it.map) }
+                osmMap?.let {
+                    it.mapOrientation = 0f
+                    it.invalidate()
+                }
+                visibility = View.GONE
+            }
+        }
+        resetNorthButton = north
+        container.addView(north, FrameLayout.LayoutParams(dp(TOUCH_DP), dp(TOUCH_DP)).apply {
+            gravity = Gravity.TOP or Gravity.START
+            topMargin = dp(12); leftMargin = dp(12)
+        })
+
+        val zoomCol = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+        }
+        val zoomOut = TextView(ctx).apply {
+            text = "−"
+            setTextColor(COLOR_FG)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            background = pressableBg(COLOR_PILL, 12)
+            contentDescription = "Уменьшить масштаб"
+            setOnClickListener {
+                yandexMap?.let { MapKitHub.zoomBy(it.map, -1f) }
+                osmMap?.controller?.zoomOut()
+            }
+        }
+        val zoomIn = TextView(ctx).apply {
+            text = "+"
+            setTextColor(COLOR_FG)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            background = pressableBg(COLOR_PILL, 12)
+            contentDescription = "Увеличить масштаб"
+            setOnClickListener {
+                yandexMap?.let { MapKitHub.zoomBy(it.map, +1f) }
+                osmMap?.controller?.zoomIn()
+            }
+        }
+        zoomCol.addView(zoomOut, LinearLayout.LayoutParams(dp(TOUCH_DP), dp(TOUCH_DP)).also { it.bottomMargin = dp(GAP_DP) })
+        zoomCol.addView(zoomIn, LinearLayout.LayoutParams(dp(TOUCH_DP), dp(TOUCH_DP)))
+        container.addView(zoomCol, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            rightMargin = dp(12)
+        })
+    }
+
+    private fun mapWrapper(container: FrameLayout): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = roundedBg(COLOR_BG, 16, COLOR_BORDER, 1)
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+            addView(container, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        }
+    }
+
+    private fun addMapWindow(wrapper: LinearLayout) {
+        val dm = resources.displayMetrics
+        val w = (dm.widthPixels * 0.92).toInt()
+        val h = (dm.heightPixels * 0.85).toInt()
+
+        fullMapLayoutParams = WindowManager.LayoutParams(
+            w, h, windowType(),
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.CENTER }
+
+        windowManager?.addView(wrapper, fullMapLayoutParams)
+        fullMapWrapper = wrapper
+    }
+
+    private fun startOrientationTicker() {
+        val ticker = object : Runnable {
+            override fun run() {
+                try {
+                    if (yandexMap == null && osmMap == null) return
+                    val az = yandexMap?.let { MapKitHub.azimuth(it.map) }
+                        ?: (osmMap?.mapOrientation ?: 0f)
+                    resetNorthButton?.visibility = if (Math.abs(az) > 1f) View.VISIBLE else View.GONE
+                } catch (_: Throwable) {}
+                handler.postDelayed(this, 300L)
+            }
+        }
+        orientationTicker = ticker
+        handler.post(ticker)
+    }
+
     private fun closeFullMap() {
         orientationTicker?.let { handler.removeCallbacks(it) }
         orientationTicker = null
+        try { yandexMap?.onStop() } catch (_: Throwable) {}
+        MapKitHub.stop()
+        yandexMap = null
+        try { osmMap?.onDetach() } catch (_: Throwable) {}
+        osmMap = null
         try {
             fullMapWrapper?.let { windowManager?.removeView(it) }
         } catch (_: Throwable) {}
         fullMapWrapper = null
         fullMapLayoutParams = null
         resetNorthButton = null
-        try { fullMap?.onDetach() } catch (_: Throwable) {}
-        fullMap = null
     }
 
     // ===================== КОНТЕНТ =====================
@@ -1269,7 +1324,6 @@ class OverlayService : Service() {
             container.addView(buildActionsCard())
             container.addView(buildDoorsCard())
 
-            // не прыгаем в начало после каждого тапа
             contentScroll?.post { contentScroll?.scrollTo(0, scrollY) }
         } catch (e: Throwable) {
             CrashLogger.log(this, "rebuildContent", e)
