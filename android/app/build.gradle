@@ -48,7 +48,8 @@ android {
     defaultConfig {
         // Пакет 2ГИС: курьерка шлёт интенты карт именно в него.
         applicationId "ru.dublgis.dgismobile"
-        minSdk flutter.minSdkVersion
+        // MapKit требует minSdk 26 (Android 8.0+). Наши устройства: 33 и 29/30.
+        minSdkVersion 26
         targetSdk flutter.targetSdkVersion
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
