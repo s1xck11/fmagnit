@@ -40,7 +40,8 @@ import java.lang.reflect.Proxy
  *  - пробки: MapKitFactory.createTrafficLayer + setTrafficVisible;
  *  - авто: DirectionsFactory.createDrivingRouter(COMBINED), вложенный листенер;
  *  - вело/пешком: TransportFactory.createBicycleRouterV2 / createPedestrianRouter;
- *  - RequestPoint в 4.13: пустой конструктор + свойства point/requestPointType;
+ *  - RequestPoint: конструкция через рефлексию (ctor 2 -> 5 -> 0 + поля по типам),
+ *    чтобы не зависеть от различий сигнатур между версиями SDK;
  *  - электровел: рефлексия по createElectricBikeRouter[V2], иначе честный вело-fallback.
  */
 object MapKitHub {
@@ -160,11 +161,35 @@ object MapKitHub {
         }
     }
 
+    /**
+     * RequestPoint в разных версиях SDK имеет разные конструкторы
+     * (2 аргумента / 5 аргументов / пустой + поля). Не угадываем —
+     * выбираем фактический конструктор рефлексией, иначе пустой + поля по типам.
+     */
     private fun requestPoint(lat: Double, lon: Double): RequestPoint {
-        return RequestPoint().apply {
-            point = Point(lat, lon)
-            requestPointType = RequestPointType.WAYPOINT
+        val p = Point(lat, lon)
+        val clazz = RequestPoint::class.java
+        val ctors = clazz.constructors
+
+        ctors.firstOrNull { it.parameterTypes.size == 2 }?.let { c ->
+            return c.newInstance(p, RequestPointType.WAYPOINT) as RequestPoint
         }
+        ctors.firstOrNull { it.parameterTypes.size == 5 }?.let { c ->
+            return c.newInstance(p, RequestPointType.WAYPOINT, null, null, null) as RequestPoint
+        }
+
+        val rp = clazz.newInstance()
+        for (f in clazz.fields) {
+            try {
+                f.isAccessible = true
+                if (f.type == Point::class.java) {
+                    f.set(rp, p)
+                } else if (f.type == RequestPointType::class.java) {
+                    f.set(rp, RequestPointType.WAYPOINT)
+                }
+            } catch (_: Throwable) {}
+        }
+        return rp
     }
 
     /**
