@@ -155,7 +155,6 @@ object MockManager {
                 for (p in providers) ensureProvider(p)
                 running = true
             }
-            // залп: свежий last-known мгновенно
             pushLocation()
             handler?.postDelayed({ pushLocation() }, 120)
             handler?.postDelayed({ pushLocation() }, 260)
