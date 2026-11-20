@@ -19,6 +19,16 @@ if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
 }
 
+// Ключ MapKit приходит из секрета GitHub через android/mapkit.properties (workflow).
+// В репо файл не коммитится. Нет файла/ключа -> пустая строка -> fallback на OSM.
+def mapkitPropsFile = rootProject.file("mapkit.properties")
+def mapkitKey = ""
+if (mapkitPropsFile.exists()) {
+    def mp = new Properties()
+    mapkitPropsFile.withReader('UTF-8') { reader -> mp.load(reader) }
+    mapkitKey = mp.getProperty('MAPKIT_API_KEY', '')
+}
+
 android {
     namespace "com.s1xck.fmagnit"
     compileSdk flutter.compileSdkVersion
@@ -33,14 +43,19 @@ android {
 
     sourceSets { main.java.srcDirs += 'src/main/kotlin' }
 
+    buildFeatures { buildConfig true }
+
     defaultConfig {
         // Пакет 2ГИС: курьерка шлёт интенты карт именно в него.
-        // Kotlin-пакет и namespace остаются com.s1xck.fmagnit.
         applicationId "ru.dublgis.dgismobile"
         minSdk flutter.minSdkVersion
         targetSdk flutter.targetSdkVersion
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
+
+        buildConfigField "String", "MAPKIT_API_KEY", "\"${mapkitKey}\""
+
+        ndk { abiFilters 'arm64-v8a', 'armeabi-v7a' }
     }
 
     signingConfigs {
@@ -72,4 +87,6 @@ flutter { source '../..' }
 
 dependencies {
     implementation "org.osmdroid:osmdroid-android:6.1.18"
+    // MapKit full: карта + пробки + геокод + маршруты (авто/вело/электровел/пешком)
+    implementation "com.yandex.android:maps.mobile:4.45.0-full"
 }
