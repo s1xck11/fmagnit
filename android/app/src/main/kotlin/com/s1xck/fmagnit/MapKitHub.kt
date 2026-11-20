@@ -17,7 +17,9 @@ import com.yandex.mapkit.geometry.Point
 import com.yandex.mapkit.geometry.Polyline
 import com.yandex.mapkit.map.CameraPosition
 import com.yandex.mapkit.map.Map
+import com.yandex.mapkit.map.PlacemarkMapObject
 import com.yandex.mapkit.mapview.MapView
+import com.yandex.mapkit.traffic.TrafficLayer
 import com.yandex.mapkit.transport.TransportFactory
 import com.yandex.mapkit.transport.masstransit.FitnessOptions
 import com.yandex.mapkit.transport.masstransit.Route as MtRoute
@@ -33,15 +35,14 @@ import java.lang.reflect.Proxy
  *  - setApiKey ДО initialize, ровно один раз на процесс;
  *  - ключ из BuildConfig (секрет GitHub), пусто -> fallback на OSM;
  *  - lifecycle onStart/onStop у фабрики и у MapView;
- *  - night mode, камера, placemarks, пробки, маршруты 4 типов.
+ *  - night mode, камера, placemarks, пробки (по умолчанию скрыты), маршруты 4 типов.
  *
  * Имена API сверены с исходниками официального плагина yandex_mapkit
  * и с фактическим компилятором против 4.13:
  *  - пробки: MapKitFactory.createTrafficLayer + setTrafficVisible;
  *  - авто: DirectionsFactory.createDrivingRouter(COMBINED), вложенный листенер;
  *  - вело/пешком: TransportFactory.createBicycleRouterV2 / createPedestrianRouter;
- *  - RequestPoint: конструкция через рефлексию (ctor 2 -> 5 -> 0 + поля по типам),
- *    чтобы не зависеть от различий сигнатур между версиями SDK;
+ *  - RequestPoint: конструкция через рефлексию (ctor 2 -> 5 -> 0 + поля по типам);
  *  - электровел: рефлексия по createElectricBikeRouter[V2], иначе честный вело-fallback.
  */
 object MapKitHub {
@@ -49,6 +50,7 @@ object MapKitHub {
     @Volatile private var initialized = false
     @Volatile private var started = false
     @Volatile private var appCtx: Context? = null
+    @Volatile private var trafficLayer: TrafficLayer? = null
     private val lock = Any()
 
     data class RouteResult(
@@ -86,7 +88,8 @@ object MapKitHub {
             mv.map.isNightModeEnabled = night
             try {
                 val layer = MapKitFactory.getInstance().createTrafficLayer(mv.mapWindow)
-                layer.setTrafficVisible(true)
+                layer.setTrafficVisible(OverlayPrefs.loadTrafficEnabled(ctx))
+                trafficLayer = layer
             } catch (e: Throwable) {
                 CrashLogger.log(ctx, "mapkit_traffic", e)
             }
@@ -95,6 +98,12 @@ object MapKitHub {
             CrashLogger.log(ctx, "mapkit_view", e)
             null
         }
+    }
+
+    fun setTrafficVisible(visible: Boolean) {
+        try {
+            trafficLayer?.setTrafficVisible(visible)
+        } catch (_: Throwable) {}
     }
 
     fun start() {
@@ -140,12 +149,15 @@ object MapKitHub {
         map.cameraPosition.azimuth
     } catch (_: Throwable) { 0f }
 
-    fun placemark(map: Map, lat: Double, lon: Double, icon: Bitmap? = null) {
-        try {
+    fun placemark(map: Map, lat: Double, lon: Double, icon: Bitmap? = null): PlacemarkMapObject? {
+        return try {
             val pm = map.mapObjects.addPlacemark()
             pm.geometry = Point(lat, lon)
             if (icon != null) pm.setIcon(ImageProvider.fromBitmap(icon))
-        } catch (_: Throwable) {}
+            pm
+        } catch (_: Throwable) {
+            null
+        }
     }
 
     fun drawRoute(map: Map, points: List<Pair<Double, Double>>) {
