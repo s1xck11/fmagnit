@@ -19,10 +19,12 @@ object OverlayPrefs {
     private const val KEY_HEADER_WIDTH_PCT = "header_width_pct"
     private const val KEY_TRANSPORT_MODE = "transport_mode"
     private const val KEY_MAP_PROVIDER = "map_provider"
+    private const val KEY_TRAFFIC_ENABLED = "traffic_enabled"
 
     private const val DEFAULT_HEADER_WIDTH_PCT = 65
     private const val DEFAULT_TRANSPORT_MODE = "auto"
     private const val DEFAULT_MAP_PROVIDER = "auto"
+    private const val DEFAULT_TRAFFIC_ENABLED = false
 
     private val TRANSPORT_MODES = listOf("auto", "bicycle", "electric_bike", "pedestrian")
     private val MAP_PROVIDERS = listOf("auto", "osm", "yandex")
@@ -98,5 +100,13 @@ object OverlayPrefs {
     fun loadMapProvider(ctx: Context): String {
         val p = prefs(ctx).getString(KEY_MAP_PROVIDER, DEFAULT_MAP_PROVIDER) ?: DEFAULT_MAP_PROVIDER
         return if (MAP_PROVIDERS.contains(p)) p else DEFAULT_MAP_PROVIDER
+    }
+
+    fun saveTrafficEnabled(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_TRAFFIC_ENABLED, enabled).apply()
+    }
+
+    fun loadTrafficEnabled(ctx: Context): Boolean {
+        return prefs(ctx).getBoolean(KEY_TRAFFIC_ENABLED, DEFAULT_TRAFFIC_ENABLED)
     }
 }
