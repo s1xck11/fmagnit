@@ -23,6 +23,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import android.text.InputType
 import android.text.TextUtils
 import android.util.TypedValue
@@ -39,6 +40,7 @@ import android.widget.Toast
 import org.json.JSONArray
 import org.json.JSONObject
 import org.osmdroid.config.Configuration
+import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
@@ -52,10 +54,10 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * Семантические токены тёмной темы (ui-ux-pro-max: contrast >= 4.5:1):
+ * Семантические токены тёмной темы интерфейса (карта светлая MAPNIK):
  * bg #121212, surface #202020, border #2E2E2E, fg #FFFFFF,
  * muted #9E9E9E, accent #E30613, success #00C853.
- * Touch-targets 48dp, зазоры 8dp (Android-норма скилла).
+ * Touch-targets 48dp, зазоры 8dp, guard двойных тапов 400 мс.
  */
 class OverlayService : Service() {
 
@@ -76,11 +78,11 @@ class OverlayService : Service() {
         private const val COLOR_PLATE_BG = 0xFFFFFFFF.toInt()
         private const val COLOR_PLATE_TEXT = 0xFF1E1E1E.toInt()
         private const val COLOR_MY_LOCATION = 0xFF2196F3.toInt()
-        private const val COLOR_MAP_BG = 0xFF0D0D0D.toInt()
 
         private const val HEADER_HEIGHT_DP = 48
         private const val TOUCH_DP = 48
         private const val GAP_DP = 8
+        private const val CLICK_GUARD_MS = 400L
 
         private const val DOOR_SEARCH_RADIUS_M = 50.0
 
@@ -115,6 +117,7 @@ class OverlayService : Service() {
     private var contentWindowView: LinearLayout? = null
     private var contentWindowLp: WindowManager.LayoutParams? = null
     private var contentContainer: LinearLayout? = null
+    private var contentScroll: ScrollView? = null
 
     private var activeLabel: TextView? = null
     private var dotView: TextView? = null
@@ -123,6 +126,7 @@ class OverlayService : Service() {
     private var pointsExpanded = true
     private var doorsExpanded = false
     private var isRunning = false
+    private var lastClickAt = 0L
 
     private val handler = Handler(Looper.getMainLooper())
 
@@ -314,18 +318,27 @@ class OverlayService : Service() {
         return d
     }
 
-    private fun lighten(color: Int, f: Float = 0.14f): Int {
-        val r = (Color.red(color) + (255 - Color.red(color)) * f).toInt()
-        val g = (Color.green(color) + (255 - Color.green(color)) * f).toInt()
-        val b = (Color.blue(color) + (255 - Color.blue(color)) * f).toInt()
+    private fun lighten(color: Int, f: Float): Int {
+        val r = (Color.red(color) + (255 - Color.red(color)) * f).toInt().coerceIn(0, 255)
+        val g = (Color.green(color) + (255 - Color.green(color)) * f).toInt().coerceIn(0, 255)
+        val b = (Color.blue(color) + (255 - Color.blue(color)) * f).toInt().coerceIn(0, 255)
         return Color.argb(Color.alpha(color), r, g, b)
     }
 
     private fun pressableBg(color: Int, radiusDp: Int): StateListDrawable {
         val d = StateListDrawable()
-        d.addState(intArrayOf(android.R.attr.state_pressed), roundedBg(lighten(color), radiusDp))
+        d.addState(intArrayOf(-android.R.attr.state_enabled), roundedBg(lighten(color, -0.45f), radiusDp))
+        d.addState(intArrayOf(android.R.attr.state_pressed), roundedBg(lighten(color, 0.14f), radiusDp))
         d.addState(intArrayOf(), roundedBg(color, radiusDp))
         return d
+    }
+
+    private fun guarded(onClick: () -> Unit): () -> Unit = {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastClickAt >= CLICK_GUARD_MS) {
+            lastClickAt = now
+            onClick()
+        }
     }
 
     private fun windowType(): Int =
@@ -361,7 +374,7 @@ class OverlayService : Service() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(16), 0, dp(14), 0)
             background = pressableBg(COLOR_PILL, 24)
-            setOnClickListener { toggleExpanded() }
+            setOnClickListener(guarded { toggleExpanded() })
             contentDescription = "Панель fmagnit, открыть или закрыть"
         }
 
@@ -451,7 +464,7 @@ class OverlayService : Service() {
                 background = pressableBg(COLOR_INACTIVE, 12)
                 minWidth = dp(TOUCH_DP); minHeight = dp(TOUCH_DP)
                 contentDescription = "Закрыть панель"
-                setOnClickListener { toggleExpanded() }
+                setOnClickListener(guarded { toggleExpanded() })
             })
             wrapper.addView(topRow)
 
@@ -475,6 +488,7 @@ class OverlayService : Service() {
                 contentContainer,
                 ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
             )
+            contentScroll = scroll
             wrapper.addView(
                 scroll,
                 LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -495,6 +509,7 @@ class OverlayService : Service() {
             contentWindowView = null
             contentWindowLp = null
             contentContainer = null
+            contentScroll = null
         }
     }
 
@@ -505,6 +520,7 @@ class OverlayService : Service() {
         contentWindowView = null
         contentWindowLp = null
         contentContainer = null
+        contentScroll = null
         doorsExpanded = false
     }
 
@@ -552,7 +568,7 @@ class OverlayService : Service() {
                 minHeight = dp(TOUCH_DP)
                 gravity = Gravity.CENTER_VERTICAL
                 background = pressableBg(COLOR_SURFACE, 8)
-                setOnClickListener { onClick() }
+                setOnClickListener(guarded(onClick))
             }
         }
     }
@@ -567,7 +583,7 @@ class OverlayService : Service() {
             minHeight = dp(TOUCH_DP)
             setPadding(dp(10), dp(12), dp(10), dp(12))
             background = pressableBg(bg, 12)
-            setOnClickListener { onClick() }
+            setOnClickListener(guarded(onClick))
         }
     }
 
@@ -617,7 +633,7 @@ class OverlayService : Service() {
 
         val go = actionBtn("ПЕРЕЙТИ", COLOR_ACCENT) {
             try {
-                isRunning = MockManager.start(this@OverlayService, lat, lon, 5.0, 0.0, 1000L)
+                isRunning = MockManager.start(this@OverlayService, lat, lon, 5.0, 0.0)
                 OverlayPrefs.saveRunning(this@OverlayService, isRunning)
                 rebuildContent()
             } catch (_: Throwable) {}
@@ -632,10 +648,10 @@ class OverlayService : Service() {
             gravity = Gravity.CENTER
             minHeight = dp(TOUCH_DP)
             background = pressableBg(COLOR_SURFACE, 8)
-            setOnClickListener {
+            setOnClickListener(guarded {
                 OrderTargetStore.clear(this@OverlayService)
                 rebuildContent()
-            }
+            })
         })
         return c
     }
@@ -664,12 +680,12 @@ class OverlayService : Service() {
                 setPadding(dp(6), dp(8), dp(6), dp(8))
                 background = pressableBg(COLOR_SURFACE, 8)
                 contentDescription = if (isActive) "$name, активная точка" else name
-                setOnClickListener {
+                setOnClickListener(guarded {
                     currentActiveId = id
                     OverlayPrefs.saveActiveId(this@OverlayService, id)
                     activeLabel?.text = name
                     rebuildContent()
-                }
+                })
             })
         }
         return c
@@ -694,7 +710,7 @@ class OverlayService : Service() {
                     if (id != null) {
                         val point = parsePointsFull(currentPointsJson).firstOrNull { it.first == id }
                         if (point != null) {
-                            isRunning = MockManager.start(this@OverlayService, point.second, point.third, point.fourth, 0.0, 1000L)
+                            isRunning = MockManager.start(this@OverlayService, point.second, point.third, point.fourth, 0.0)
                             OverlayPrefs.saveRunning(this@OverlayService, isRunning)
                         }
                     }
@@ -703,7 +719,6 @@ class OverlayService : Service() {
             } catch (_: Throwable) {}
         }
         toggle.isEnabled = canStart
-        toggle.alpha = if (canStart) 1f else 0.5f
         toggle.layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
         )
@@ -783,8 +798,11 @@ class OverlayService : Service() {
     // ===================== КАРТА =====================
 
     private fun createMapView(): MapView {
-        val map = DarkTileProvider.createMapView(this)
+        val ctx = this
+        val map = MapView(ctx)
         try {
+            map.setTileSource(TileSourceFactory.MAPNIK)
+            map.setBuiltInZoomControls(false)
             map.setUseDataConnection(true)
             map.setMultiTouchControls(true)
             map.controller.setZoom(17.0)
@@ -1108,7 +1126,7 @@ class OverlayService : Service() {
                 gravity = Gravity.CENTER
                 background = pressableBg(COLOR_ACCENT, 24)
                 contentDescription = "Закрыть карту"
-                setOnClickListener { closeFullMap() }
+                setOnClickListener(guarded { closeFullMap() })
             }
             container.addView(closeBtn, FrameLayout.LayoutParams(dp(TOUCH_DP), dp(TOUCH_DP)).apply {
                 gravity = Gravity.TOP or Gravity.END
@@ -1136,13 +1154,45 @@ class OverlayService : Service() {
                 topMargin = dp(12); leftMargin = dp(12)
             })
 
+            // Свои тёмные зум-кнопки 48dp справа снизу (встроенные белые убраны)
+            val zoomCol = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+            }
+            val zoomOut = TextView(ctx).apply {
+                text = "−"
+                setTextColor(COLOR_FG)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
+                setTypeface(typeface, Typeface.BOLD)
+                gravity = Gravity.CENTER
+                background = pressableBg(COLOR_PILL, 12)
+                contentDescription = "Уменьшить масштаб"
+                setOnClickListener { fullMap?.controller?.zoomOut() }
+            }
+            val zoomIn = TextView(ctx).apply {
+                text = "+"
+                setTextColor(COLOR_FG)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
+                setTypeface(typeface, Typeface.BOLD)
+                gravity = Gravity.CENTER
+                background = pressableBg(COLOR_PILL, 12)
+                contentDescription = "Увеличить масштаб"
+                setOnClickListener { fullMap?.controller?.zoomIn() }
+            }
+            zoomCol.addView(zoomOut, LinearLayout.LayoutParams(dp(TOUCH_DP), dp(TOUCH_DP)).also { it.bottomMargin = dp(GAP_DP) })
+            zoomCol.addView(zoomIn, LinearLayout.LayoutParams(dp(TOUCH_DP), dp(TOUCH_DP)))
+            container.addView(zoomCol, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.BOTTOM or Gravity.END
+                rightMargin = dp(12); bottomMargin = dp(12)
+            })
+
             // Attribution обязателен и виден без взаимодействий (лицензия тайлов)
             val attr = TextView(ctx).apply {
                 text = "© OpenStreetMap contributors"
-                setTextColor(0xFFBDBDBD.toInt())
+                setTextColor(0xFF444444.toInt())
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
                 setPadding(dp(6), dp(3), dp(6), dp(3))
-                background = roundedBg(0xB3121212.toInt(), 6)
+                background = roundedBg(0xB3FFFFFF.toInt(), 6)
             }
             container.addView(attr, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 gravity = Gravity.BOTTOM or Gravity.START
@@ -1208,6 +1258,7 @@ class OverlayService : Service() {
             activeLabel?.text = currentActiveNameOrPlaceholder()
 
             val container = contentContainer ?: return
+            val scrollY = contentScroll?.scrollY ?: 0
             container.removeAllViews()
 
             val order = OrderTargetStore.load(this)
@@ -1217,6 +1268,9 @@ class OverlayService : Service() {
             container.addView(buildPointsCard())
             container.addView(buildActionsCard())
             container.addView(buildDoorsCard())
+
+            // не прыгаем в начало после каждого тапа
+            contentScroll?.post { contentScroll?.scrollTo(0, scrollY) }
         } catch (e: Throwable) {
             CrashLogger.log(this, "rebuildContent", e)
         }
