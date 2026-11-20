@@ -87,6 +87,7 @@ flutter { source '../..' }
 
 dependencies {
     implementation "org.osmdroid:osmdroid-android:6.1.18"
-    // MapKit full: карта + пробки + геокод + маршруты (авто/вело/электровел/пешком)
-    implementation "com.yandex.android:maps.mobile:4.45.0-full"
+    // MapKit full до перехода на Java 21-байткод (4.45 = major 65, не читается нашим ASM).
+    // 4.13: карта + пробки + геокод + маршруты авто/вело/электровел/пешком.
+    implementation "com.yandex.android:maps.mobile:4.13.0-full"
 }
