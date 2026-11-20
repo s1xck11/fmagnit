@@ -46,6 +46,8 @@ import org.osmdroid.views.MapView as OsmMapView
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline as OsmPolyline
 import org.osmdroid.views.overlay.gestures.RotationGestureOverlay
+import com.yandex.mapkit.geometry.Point
+import com.yandex.mapkit.map.PlacemarkMapObject
 import com.yandex.mapkit.mapview.MapView as YandexMapView
 import java.io.File
 import java.util.Locale
@@ -62,6 +64,8 @@ import kotlin.math.sqrt
  * Touch-targets 48dp, зазоры 8dp, guard двойных тапов 400 мс.
  * Карта: провайдер из настроек (auto / osm / yandex).
  * Нижние углы карты свободны под лого Яндекса / attribution OSM.
+ * Маршрут строится автоматически при открытии карты заказа.
+ * Маркер «моё гео» живой и mock-aware.
  */
 class OverlayService : Service() {
 
@@ -140,10 +144,15 @@ class OverlayService : Service() {
     private var fullMapLayoutParams: WindowManager.LayoutParams? = null
     private var resetNorthButton: TextView? = null
     private var orientationTicker: Runnable? = null
+    private var tickCount = 0
+
+    private var myPlacemark: PlacemarkMapObject? = null
+    private var osmMyMarker: Marker? = null
 
     private var routeEta: String = ""
     private var routeDistance: String = ""
     private var routePoints: List<Pair<Double, Double>> = emptyList()
+    private var routeTarget: Pair<Double, Double>? = null
 
     private var wakeLock: PowerManager.WakeLock? = null
 
@@ -228,6 +237,7 @@ class OverlayService : Service() {
                         routeEta = ""
                         routeDistance = ""
                         routePoints = emptyList()
+                        routeTarget = null
                         handler.post { openFullMap(lat, lon) }
                     }
                 }
@@ -236,6 +246,7 @@ class OverlayService : Service() {
                     routeEta = ""
                     routeDistance = ""
                     routePoints = emptyList()
+                    routeTarget = null
                     handler.post { rebuildContent() }
                 }
                 ACTION_SET_HEADER_WIDTH -> {
@@ -691,6 +702,7 @@ class OverlayService : Service() {
                 routeEta = ""
                 routeDistance = ""
                 routePoints = emptyList()
+                routeTarget = null
                 rebuildContent()
             })
         })
@@ -714,6 +726,7 @@ class OverlayService : Service() {
                 routePoints = result.points
                 routeEta = result.eta
                 routeDistance = result.distance
+                routeTarget = lat to lon
                 drawRouteOnMap()
                 rebuildContent()
             }
@@ -1113,7 +1126,14 @@ class OverlayService : Service() {
                 }
                 buildOsmMapWindow(lat, lon)
             }
-            if (routePoints.isNotEmpty()) drawRouteOnMap()
+
+            // Авто-маршрут при открытии карты заказа; повторное открытие — из кэша.
+            val target = lat to lon
+            if (routeTarget != target) {
+                requestRouteTo(lat, lon)
+            } else if (routePoints.isNotEmpty()) {
+                drawRouteOnMap()
+            }
         } catch (e: Throwable) {
             CrashLogger.log(this, "openFullMap", e)
             closeFullMap()
@@ -1135,7 +1155,9 @@ class OverlayService : Service() {
             }
             try {
                 val myLoc = getCurrentLocation()
-                if (myLoc != null) MapKitHub.placemark(ym.map, myLoc.latitude, myLoc.longitude, myLocationIcon())
+                if (myLoc != null) {
+                    myPlacemark = MapKitHub.placemark(ym.map, myLoc.latitude, myLoc.longitude, myLocationIcon())
+                }
             } catch (_: Throwable) {}
             val nearby = findNearbyDoorCodes(lat, lon)
             if (nearby.isNotEmpty()) {
@@ -1206,6 +1228,7 @@ class OverlayService : Service() {
                     val ic = myLocationIcon()
                     if (ic != null) mm.icon = BitmapDrawable(resources, ic)
                     map.overlays.add(mm)
+                    osmMyMarker = mm
                 }
             } catch (_: Throwable) {}
 
@@ -1359,6 +1382,7 @@ class OverlayService : Service() {
     }
 
     private fun startOrientationTicker() {
+        tickCount = 0
         val ticker = object : Runnable {
             override fun run() {
                 try {
@@ -1366,6 +1390,8 @@ class OverlayService : Service() {
                     val az = yandexMap?.let { MapKitHub.azimuth(it.map) }
                         ?: (osmMap?.mapOrientation ?: 0f)
                     resetNorthButton?.visibility = if (Math.abs(az) > 1f) View.VISIBLE else View.GONE
+                    tickCount++
+                    if (tickCount % 7 == 0) updateMyMarker()
                 } catch (_: Throwable) {}
                 handler.postDelayed(this, 300L)
             }
@@ -1374,9 +1400,27 @@ class OverlayService : Service() {
         handler.post(ticker)
     }
 
+    /** Живой маркер моей позиции: mock-aware, обновление ~2 сек. */
+    private fun updateMyMarker() {
+        val loc = getCurrentLocation() ?: return
+        myPlacemark?.let {
+            try {
+                it.geometry = Point(loc.latitude, loc.longitude)
+            } catch (_: Throwable) {}
+        }
+        osmMyMarker?.let {
+            try {
+                it.position = GeoPoint(loc.latitude, loc.longitude)
+                osmMap?.invalidate()
+            } catch (_: Throwable) {}
+        }
+    }
+
     private fun closeFullMap() {
         orientationTicker?.let { handler.removeCallbacks(it) }
         orientationTicker = null
+        myPlacemark = null
+        osmMyMarker = null
         try { yandexMap?.onStop() } catch (_: Throwable) {}
         MapKitHub.stop()
         yandexMap = null
