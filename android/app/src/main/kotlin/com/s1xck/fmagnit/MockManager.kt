@@ -13,9 +13,27 @@ import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.random.Random
 
+/**
+ * Агрессивная подмена:
+ *  - провайдеры gps + network + fused (fused пропускается, если система не даёт);
+ *  - пуш ~350 мс + залп при старте;
+ *  - мелкий джиттер и плавный bearing — стабильная «живая» позиция.
+ *
+ * Предел: isFromMockProvider() система ставит сама на test-provider локации,
+ * скрыть флаг без root/Xposed невозможно.
+ */
 object MockManager {
     private const val TAG = "FMAGNIT_MOCK"
-    private val providers = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
+    private const val PUSH_INTERVAL_MS = 350L
+    private const val JITTER_METERS = 1.2
+
+    private val providers = listOf(
+        LocationManager.GPS_PROVIDER,
+        LocationManager.NETWORK_PROVIDER,
+        "fused"
+    )
+    private val activeProviders = ArrayList<String>()
+
     private var locationManager: LocationManager? = null
     private var handler: Handler? = null
     private var pushRunnable: Runnable? = null
@@ -25,10 +43,9 @@ object MockManager {
     private var baseAlt: Double = 0.0
     private var displayLat: Double = 0.0
     private var displayLon: Double = 0.0
+    private var lastBearing: Float = 0f
     @Volatile private var running: Boolean = false
 
-    // Защита от гонки STOP -> START:
-    // каждый start повышает поколение, старый teardown видит это и отменяется.
     private val lock = Any()
     @Volatile private var generation: Int = 0
 
@@ -59,7 +76,7 @@ object MockManager {
         ensureInit(ctx)
         val lm = locationManager ?: return null
         var best: Location? = null
-        for (p in providers) {
+        for (p in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)) {
             val loc = try { lm.getLastKnownLocation(p) } catch (_: Exception) { null } ?: continue
             if (best == null) { best = loc; continue }
             val ageDiff = best.time - loc.time
@@ -87,7 +104,10 @@ object MockManager {
                 @Suppress("DEPRECATION") lm.addTestProvider(providerName, false, false, false, false, true, true, true, Criteria.POWER_LOW, Criteria.ACCURACY_FINE)
             }
             lm.setTestProviderEnabled(providerName, true)
-        } catch (_: Exception) {}
+            if (!activeProviders.contains(providerName)) activeProviders.add(providerName)
+        } catch (_: Exception) {
+            // fused может быть закрыт системой — не страшно, gps+network работают
+        }
     }
 
     private fun buildLocation(providerName: String, lat: Double, lon: Double, acc: Double, alt: Double, speed: Float, bearing: Float): Location {
@@ -101,10 +121,10 @@ object MockManager {
         return loc
     }
 
-    private fun applyJitter(offsetMeters: Double = 2.5) {
+    private fun applyJitter() {
         val r = Random.nextDouble(-1.0, 1.0) + Random.nextDouble(-1.0, 1.0)
         val angle = Random.nextDouble(0.0, 2 * Math.PI)
-        val dx = r * offsetMeters * cos(angle); val dy = r * offsetMeters * sin(angle)
+        val dx = r * JITTER_METERS * cos(angle); val dy = r * JITTER_METERS * sin(angle)
         val metersPerDegLat = 111_320.0; val metersPerDegLon = 111_320.0 * cos(Math.toRadians(baseLat))
         displayLat = baseLat + dy / metersPerDegLat; displayLon = baseLon + dx / metersPerDegLon
     }
@@ -112,28 +132,47 @@ object MockManager {
     private fun pushLocation() {
         val lm = locationManager ?: return; if (!running) return
         applyJitter()
-        val jitterAcc = baseAcc + Random.nextDouble(-3.0, 3.0); val acc = jitterAcc.coerceAtLeast(1.0)
-        val speed = Random.nextFloat() * 0.4f; val bearing = Random.nextFloat() * 360f
-        try { for (p in providers) { val loc = buildLocation(p, displayLat, displayLon, acc, baseAlt, speed, bearing); try { lm.setTestProviderLocation(p, loc) } catch (_: Exception) {} } } catch (_: Exception) {}
+        val acc = (baseAcc + Random.nextDouble(-1.5, 1.5)).coerceIn(2.0, 8.0)
+        val speed = Random.nextFloat() * 0.3f
+        lastBearing = ((lastBearing + Random.nextFloat() * 50f - 25f) + 360f) % 360f
+        val targets = if (activeProviders.isEmpty()) providers else activeProviders
+        try {
+            for (p in targets) {
+                val loc = buildLocation(p, displayLat, displayLon, acc, baseAlt, speed, lastBearing)
+                try { lm.setTestProviderLocation(p, loc) } catch (_: Exception) {}
+            }
+        } catch (_: Exception) {}
     }
 
-    fun start(ctx: Context, lat: Double, lon: Double, acc: Double = 3.0, alt: Double = 0.0, intervalMs: Long = 1000L): Boolean {
+    fun start(ctx: Context, lat: Double, lon: Double, acc: Double = 3.0, alt: Double = 0.0, intervalMs: Long = PUSH_INTERVAL_MS): Boolean {
         ensureInit(ctx)
         if (!isMockLocationEnabled(ctx)) return false
         return try {
             synchronized(lock) {
                 generation++
                 baseLat = lat; baseLon = lon; baseAcc = acc; baseAlt = alt; displayLat = lat; displayLon = lon
+                activeProviders.clear()
                 for (p in providers) ensureProvider(p)
                 running = true
             }
-            pushLocation(); startPushLoop(intervalMs); true
+            // залп: свежий last-known мгновенно
+            pushLocation()
+            handler?.postDelayed({ pushLocation() }, 120)
+            handler?.postDelayed({ pushLocation() }, 260)
+            startPushLoop(intervalMs)
+            true
         } catch (e: Exception) { false }
     }
 
     private fun startPushLoop(baseIntervalMs: Long) {
         stopPushLoop()
-        val r = object : Runnable { override fun run() { pushLocation(); val jitter = baseIntervalMs * (0.7 + Random.nextDouble() * 0.6); handler?.postDelayed(this, jitter.toLong()) } }
+        val r = object : Runnable {
+            override fun run() {
+                pushLocation()
+                val jitter = baseIntervalMs * (0.85 + Random.nextDouble() * 0.3)
+                handler?.postDelayed(this, jitter.toLong())
+            }
+        }
         pushRunnable = r; handler?.postDelayed(r, baseIntervalMs)
     }
 
@@ -160,12 +199,6 @@ object MockManager {
         return true
     }
 
-    /**
-     * Снос test-провайдеров в фоне, чтобы не морозить main-поток.
-     * Последовательность и паузы те же, что были раньше.
-     * Если за время пауз случился новый start (поколение сменилось
-     * или running снова true) — снос отменяется, свежий mock не трогаем.
-     */
     private fun teardownAsync(gen: Int) {
         val t = Thread {
             try { Thread.sleep(50) } catch (_: InterruptedException) {}
@@ -175,6 +208,7 @@ object MockManager {
                         try { locationManager?.setTestProviderEnabled(p, false) } catch (_: Exception) {}
                         try { locationManager?.removeTestProvider(p) } catch (_: Exception) {}
                     }
+                    activeProviders.clear()
                 }
             }
             try { Thread.sleep(150) } catch (_: InterruptedException) {}
