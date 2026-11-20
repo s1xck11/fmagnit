@@ -3,38 +3,30 @@ package com.s1xck.fmagnit
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.widget.Toast
 import com.yandex.mapkit.MapKitFactory
 import com.yandex.mapkit.RequestPoint
 import com.yandex.mapkit.RequestPointType
+import com.yandex.mapkit.directions.DirectionsFactory
+import com.yandex.mapkit.directions.driving.DrivingOptions
+import com.yandex.mapkit.directions.driving.DrivingRoute
+import com.yandex.mapkit.directions.driving.DrivingRouterType
+import com.yandex.mapkit.directions.driving.DrivingSession
+import com.yandex.mapkit.directions.driving.VehicleOptions
 import com.yandex.mapkit.geometry.Point
 import com.yandex.mapkit.geometry.Polyline
 import com.yandex.mapkit.map.CameraPosition
 import com.yandex.mapkit.map.Map
 import com.yandex.mapkit.mapview.MapView
-import com.yandex.mapkit.directions.bicycle.BicycleOptions
-import com.yandex.mapkit.directions.bicycle.BicycleRouterFactory
-import com.yandex.mapkit.directions.bicycle.BicycleSession
-import com.yandex.mapkit.directions.bicycle.BicycleSessionListener
-import com.yandex.mapkit.directions.bicycle.BicycleRoute
-import com.yandex.mapkit.directions.driving.DrivingOptions
-import com.yandex.mapkit.directions.driving.DrivingRouterFactory
-import com.yandex.mapkit.directions.driving.DrivingSession
-import com.yandex.mapkit.directions.driving.DrivingSessionListener
-import com.yandex.mapkit.directions.driving.DrivingRoute
-import com.yandex.mapkit.directions.driving.VehicleOptions
-import com.yandex.mapkit.directions.electric_bike.ElectricBikeOptions
-import com.yandex.mapkit.directions.electric_bike.ElectricBikeRouterFactory
-import com.yandex.mapkit.directions.electric_bike.ElectricBikeSession
-import com.yandex.mapkit.directions.electric_bike.ElectricBikeSessionListener
-import com.yandex.mapkit.directions.electric_bike.ElectricBikeRoute
-import com.yandex.mapkit.directions.pedestrian.PedestrianOptions
-import com.yandex.mapkit.directions.pedestrian.PedestrianRouterFactory
-import com.yandex.mapkit.directions.pedestrian.PedestrianSession
-import com.yandex.mapkit.directions.pedestrian.PedestrianSessionListener
-import com.yandex.mapkit.directions.pedestrian.PedestrianRoute
-import com.yandex.mapkit.traffic.TrafficLayerFactory
+import com.yandex.mapkit.transport.TransportFactory
+import com.yandex.mapkit.transport.masstransit.FitnessOptions
+import com.yandex.mapkit.transport.masstransit.Route as MtRoute
+import com.yandex.mapkit.transport.masstransit.RouteOptions
+import com.yandex.mapkit.transport.masstransit.Session as MtSession
+import com.yandex.mapkit.transport.masstransit.TimeOptions
 import com.yandex.runtime.Error
 import com.yandex.runtime.image.ImageProvider
+import java.lang.reflect.Proxy
 
 /**
  * Единая точка входа в MapKit:
@@ -42,6 +34,13 @@ import com.yandex.runtime.image.ImageProvider
  *  - ключ из BuildConfig (секрет GitHub), пусто -> fallback на OSM;
  *  - lifecycle onStart/onStop у фабрики и у MapView;
  *  - night mode, камера, placemarks, пробки, маршруты 4 типов.
+ *
+ * Имена API сверены с исходниками официального плагина yandex_mapkit:
+ *  - пробки: MapKitFactory.createTrafficLayer + setTrafficVisible;
+ *  - авто: DirectionsFactory.createDrivingRouter(COMBINED), листенер вложенный;
+ *  - вело/пешком: TransportFactory.createBicycleRouterV2 / createPedestrianRouter,
+ *    листенер Session.RouteListener (masstransit);
+ *  - электровел: рефлексия по createElectricBikeRouter[V2], иначе честный вело-fallback.
  */
 object MapKitHub {
 
@@ -82,8 +81,8 @@ object MapKitHub {
             val mv = MapView(ctx)
             mv.map.isNightModeEnabled = night
             try {
-                val layer = TrafficLayerFactory.createTrafficLayer(mv.mapWindow)
-                mv.map.addTrafficLayer(layer)
+                val layer = MapKitFactory.getInstance().createTrafficLayer(mv.mapWindow)
+                layer.setTrafficVisible(true)
             } catch (e: Throwable) {
                 CrashLogger.log(ctx, "mapkit_traffic", e)
             }
@@ -153,7 +152,7 @@ object MapKitHub {
             obj.setStrokeColor(Color.argb(230, 227, 6, 19))
             obj.setStrokeWidth(4f)
         } catch (e: Throwable) {
-            CrashLogger.log(null, "mapkit_polyline", e)
+            CrashLogger.logMessage(null, "mapkit_polyline", e.toString())
         }
     }
 
@@ -175,59 +174,25 @@ object MapKitHub {
             return
         }
         val points = listOf(
-            RequestPoint(Point(fromLat, fromLon), RequestPointType.WAYPOINT, null),
-            RequestPoint(Point(toLat, toLon), RequestPointType.WAYPOINT, null)
+            RequestPoint(Point(fromLat, fromLon), RequestPointType.WAYPOINT),
+            RequestPoint(Point(toLat, toLon), RequestPointType.WAYPOINT)
         )
         try {
             when (mode) {
-                "bicycle" -> {
-                    val router = BicycleRouterFactory.createBicycleRouter()
-                    router.requestRoutes(points, BicycleOptions(), object : BicycleSessionListener {
-                        override fun onBicycleRoutesResponse(routes: List<BicycleRoute>) {
-                            onResult(extract(routes.firstOrNull()?.geometry, routes.firstOrNull()?.metadata?.weight?.time?.text, routes.firstOrNull()?.metadata?.weight?.distance?.text))
-                        }
-                        override fun onBicycleRoutesError(error: Error) {
-                            CrashLogger.logMessage(ctx, "route_error", error.toString())
-                            onResult(null)
-                        }
-                    })
-                }
+                "bicycle" -> requestBicycle(ctx, points, onResult)
+                "pedestrian" -> requestPedestrian(ctx, points, onResult)
                 "electric_bike" -> {
-                    val router = ElectricBikeRouterFactory.createElectricBikeRouter()
-                    router.requestRoutes(points, ElectricBikeOptions(), object : ElectricBikeSessionListener {
-                        override fun onElectricBikeRoutesResponse(routes: List<ElectricBikeRoute>) {
-                            onResult(extract(routes.firstOrNull()?.geometry, routes.firstOrNull()?.metadata?.weight?.time?.text, routes.firstOrNull()?.metadata?.weight?.distance?.text))
-                        }
-                        override fun onElectricBikeRoutesError(error: Error) {
-                            CrashLogger.logMessage(ctx, "route_error", error.toString())
-                            onResult(null)
-                        }
-                    })
+                    val ok = requestElectric(ctx, points, onResult)
+                    if (!ok) {
+                        Toast.makeText(
+                            ctx,
+                            "Электровел-профиль недоступен в этой версии SDK. Построил вело-маршрут.",
+                            Toast.LENGTH_LONG
+                        ).show()
+                        requestBicycle(ctx, points, onResult)
+                    }
                 }
-                "pedestrian" -> {
-                    val router = PedestrianRouterFactory.createPedestrianRouter()
-                    router.requestRoutes(points, PedestrianOptions(), object : PedestrianSessionListener {
-                        override fun onPedestrianRoutesResponse(routes: List<PedestrianRoute>) {
-                            onResult(extract(routes.firstOrNull()?.geometry, routes.firstOrNull()?.metadata?.weight?.time?.text, routes.firstOrNull()?.metadata?.weight?.distance?.text))
-                        }
-                        override fun onPedestrianRoutesError(error: Error) {
-                            CrashLogger.logMessage(ctx, "route_error", error.toString())
-                            onResult(null)
-                        }
-                    })
-                }
-                else -> {
-                    val router = DrivingRouterFactory.createDrivingRouter()
-                    router.requestRoutes(points, DrivingOptions(), VehicleOptions(), object : DrivingSessionListener {
-                        override fun onDrivingRoutesResponse(routes: List<DrivingRoute>) {
-                            onResult(extract(routes.firstOrNull()?.geometry, routes.firstOrNull()?.metadata?.weight?.time?.text, routes.firstOrNull()?.metadata?.weight?.distance?.text))
-                        }
-                        override fun onDrivingRoutesError(error: Error) {
-                            CrashLogger.logMessage(ctx, "route_error", error.toString())
-                            onResult(null)
-                        }
-                    })
-                }
+                else -> requestDriving(ctx, points, onResult)
             }
         } catch (e: Throwable) {
             CrashLogger.log(ctx, "route_request", e)
@@ -235,14 +200,118 @@ object MapKitHub {
         }
     }
 
-    private fun extract(
-        geometry: Polyline?,
-        eta: String?,
-        distance: String?
-    ): RouteResult? {
+    private fun requestDriving(ctx: Context, points: List<RequestPoint>, onResult: (RouteResult?) -> Unit) {
+        val router = DirectionsFactory.getInstance().createDrivingRouter(DrivingRouterType.COMBINED)
+        router.requestRoutes(points, DrivingOptions(), VehicleOptions(), object : DrivingSession.DrivingRouteListener {
+            override fun onDrivingRoutes(routes: List<DrivingRoute>) {
+                val r = routes.firstOrNull()
+                if (r == null) {
+                    onResult(null)
+                    return
+                }
+                val w = r.metadata?.weight
+                val eta = w?.timeWithTraffic?.text ?: w?.time?.text ?: ""
+                val dist = w?.distance?.text ?: ""
+                onResult(extract(r.geometry, eta, dist))
+            }
+
+            override fun onDrivingRoutesError(error: Error) {
+                CrashLogger.logMessage(ctx, "route_error", error.toString())
+                onResult(null)
+            }
+        })
+    }
+
+    private fun mtListener(ctx: Context, onResult: (RouteResult?) -> Unit): MtSession.RouteListener {
+        return object : MtSession.RouteListener {
+            override fun onMasstransitRoutes(routes: List<MtRoute>) {
+                val r = routes.firstOrNull()
+                if (r == null) {
+                    onResult(null)
+                    return
+                }
+                val w = r.metadata?.weight
+                val eta = w?.time?.text ?: ""
+                val dist = w?.walkingDistance?.text ?: ""
+                onResult(extract(r.geometry, eta, dist))
+            }
+
+            override fun onMasstransitRoutesError(error: Error) {
+                CrashLogger.logMessage(ctx, "route_error", error.toString())
+                onResult(null)
+            }
+        }
+    }
+
+    private fun requestBicycle(ctx: Context, points: List<RequestPoint>, onResult: (RouteResult?) -> Unit) {
+        val router = TransportFactory.getInstance().createBicycleRouterV2()
+        router.requestRoutes(
+            points,
+            TimeOptions(null, null),
+            RouteOptions(FitnessOptions(false, false)),
+            mtListener(ctx, onResult)
+        )
+    }
+
+    private fun requestPedestrian(ctx: Context, points: List<RequestPoint>, onResult: (RouteResult?) -> Unit) {
+        val router = TransportFactory.getInstance().createPedestrianRouter()
+        router.requestRoutes(
+            points,
+            TimeOptions(null, null),
+            RouteOptions(FitnessOptions(false, false)),
+            mtListener(ctx, onResult)
+        )
+    }
+
+    /** Электровел: имя фабрики не документировано -> рефлексия, без выдуманных имён. */
+    private fun requestElectric(ctx: Context, points: List<RequestPoint>, onResult: (RouteResult?) -> Unit): Boolean {
+        return try {
+            val tf = TransportFactory.getInstance()
+            val factoryMethod = tf.javaClass.methods.firstOrNull {
+                it.name == "createElectricBikeRouterV2" || it.name == "createElectricBikeRouter"
+            } ?: return false
+            val router = factoryMethod.invoke(tf) ?: return false
+            val req = router.javaClass.methods.firstOrNull {
+                it.name == "requestRoutes" && it.parameterTypes.size == 4
+            } ?: return false
+
+            val listener = Proxy.newProxyInstance(
+                ctx.classLoader,
+                arrayOf(MtSession.RouteListener::class.java)
+            ) { _, method, args ->
+                when (method.name) {
+                    "onMasstransitRoutes" -> {
+                        val list = args?.getOrNull(0) as? List<*>
+                        val r = list?.firstOrNull() as? MtRoute
+                        if (r == null) {
+                            onResult(null)
+                        } else {
+                            val w = r.metadata?.weight
+                            onResult(extract(r.geometry, w?.time?.text ?: "", w?.walkingDistance?.text ?: ""))
+                        }
+                        null
+                    }
+                    "onMasstransitRoutesError" -> {
+                        CrashLogger.logMessage(ctx, "route_error", args?.getOrNull(0)?.toString() ?: "")
+                        onResult(null)
+                        null
+                    }
+                    else -> null
+                }
+            }
+
+            req.invoke(router, points, TimeOptions(null, null), RouteOptions(FitnessOptions(false, false)), listener)
+            true
+        } catch (e: Throwable) {
+            CrashLogger.log(ctx, "route_electric", e)
+            false
+        }
+    }
+
+    private fun extract(geometry: Polyline?, eta: String, distance: String): RouteResult? {
         if (geometry == null) return null
         val pts = geometry.points.map { it.latitude to it.longitude }
         if (pts.size < 2) return null
-        return RouteResult(pts, eta ?: "", distance ?: "")
+        return RouteResult(pts, eta, distance)
     }
 }
