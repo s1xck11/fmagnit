@@ -348,7 +348,7 @@ class OverlayService : Service() {
         return d
     }
 
-    private fun guarded(onClick: () -> Unit): () -> Unit = {
+    private fun guarded(onClick: () -> Unit): (View) -> Unit = { _ ->
         val now = SystemClock.elapsedRealtime()
         if (now - lastClickAt >= CLICK_GUARD_MS) {
             lastClickAt = now
