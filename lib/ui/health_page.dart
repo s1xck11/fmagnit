@@ -21,6 +21,9 @@ class _HealthPageState extends State<HealthPage> {
   bool _loading = true;
 
   double _widthPct = 65;
+  String _provider = 'auto';
+  String _transport = 'auto';
+  bool _mapkitKey = false;
 
   static const String _emuiInstructions = '''
 Как сделать, чтобы fmagnit не вырубался на Huawei (EMUI 12):
@@ -61,7 +64,7 @@ class _HealthPageState extends State<HealthPage> {
   void initState() {
     super.initState();
     _refresh();
-    _loadWidth();
+    _loadSettings();
   }
 
   Future<void> _refresh() async {
@@ -74,12 +77,18 @@ class _HealthPageState extends State<HealthPage> {
     });
   }
 
-  Future<void> _loadWidth() async {
-    final v = await _overlay.getHeaderWidthPct();
+  Future<void> _loadSettings() async {
+    final w = await _overlay.getHeaderWidthPct();
+    final p = await _overlay.getMapProvider();
+    final t = await _overlay.getTransportMode();
+    final k = await _overlay.isMapKitAvailable();
     if (!mounted) return;
-    // clamp возвращает num — приводим к double явно
-    final pct = v.toDouble().clamp(20.0, 100.0).toDouble();
-    setState(() => _widthPct = pct);
+    setState(() {
+      _widthPct = w.toDouble().clamp(20.0, 100.0).toDouble();
+      _provider = p;
+      _transport = t;
+      _mapkitKey = k;
+    });
   }
 
   Future<void> _copyInstructions() async {
@@ -90,12 +99,7 @@ class _HealthPageState extends State<HealthPage> {
     );
   }
 
-  Widget _item(
-    String label,
-    String desc,
-    bool ok, {
-    VoidCallback? onOpen,
-  }) {
+  Widget _card({required Widget child}) {
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 4),
       padding: const EdgeInsets.all(14),
@@ -103,6 +107,176 @@ class _HealthPageState extends State<HealthPage> {
         color: FMagnitTheme.card,
         borderRadius: BorderRadius.circular(16),
       ),
+      child: child,
+    );
+  }
+
+  Widget _cardTitle(IconData icon, String text) {
+    return Row(
+      children: [
+        Icon(icon, color: FMagnitTheme.accent, size: 22),
+        const SizedBox(width: 8),
+        Text(
+          text,
+          style: const TextStyle(
+            color: FMagnitTheme.textPrimary,
+            fontWeight: FontWeight.bold,
+            fontSize: 15,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _widthCard() {
+    return _card(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _cardTitle(Icons.tune, 'Оверлей'),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Ширина свёрнутой шапки',
+                  style: TextStyle(
+                    color: FMagnitTheme.textPrimary,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+              Text(
+                '${_widthPct.round()}%',
+                style: const TextStyle(
+                  color: FMagnitTheme.accent,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+          Semantics(
+            label: 'Ширина свёрнутой шапки оверлея в процентах',
+            slider: true,
+            child: Slider(
+              value: _widthPct,
+              min: 20,
+              max: 100,
+              divisions: 16,
+              label: '${_widthPct.round()}%',
+              activeColor: FMagnitTheme.accent,
+              inactiveColor: FMagnitTheme.inactive,
+              onChanged: (v) => setState(() => _widthPct = v),
+              onChangeEnd: (v) => _overlay.setHeaderWidthPct(v.round()),
+            ),
+          ),
+          const Text(
+            '20–100%, шаг 5%. Применяется к шапке сразу, даже при запущенном оверлее.',
+            style: TextStyle(color: FMagnitTheme.textMuted, fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _providerCard() {
+    return _card(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _cardTitle(Icons.map_outlined, 'Карта'),
+          const SizedBox(height: 12),
+          SegmentedButton<String>(
+            segments: const [
+              ButtonSegment(value: 'auto', label: Text('Яндекс/OSM')),
+              ButtonSegment(value: 'osm', label: Text('OSM')),
+              ButtonSegment(value: 'yandex', label: Text('Яндекс')),
+            ],
+            selected: {_provider},
+            showSelectedIcon: false,
+            style: SegmentedButton.styleFrom(
+              backgroundColor: FMagnitTheme.inactive,
+              foregroundColor: FMagnitTheme.textPrimary,
+              selectedBackgroundColor: FMagnitTheme.accent,
+              selectedForegroundColor: Colors.white,
+              textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+            ),
+            onSelectionChanged: (s) {
+              final v = s.first;
+              setState(() => _provider = v);
+              _overlay.setMapProvider(v);
+            },
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _provider == 'auto'
+                ? 'Авто: Яндекс при живом ключе, иначе OSM с оффлайном.'
+                : _provider == 'osm'
+                    ? 'Всегда OSM: оффлайн-регионы и attribution OSM.'
+                    : 'Всегда Яндекс. Если ключ не заведётся — предупреждение и OSM.',
+            style: const TextStyle(color: FMagnitTheme.textMuted, fontSize: 12),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _mapkitKey ? 'Ключ MapKit: есть' : 'Ключ MapKit: нет (секрет не добавлен)',
+            style: TextStyle(
+              color: _mapkitKey ? FMagnitTheme.success : FMagnitTheme.accent,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _transportCard() {
+    return _card(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _cardTitle(Icons.route_outlined, 'Маршрут'),
+          const SizedBox(height: 12),
+          SegmentedButton<String>(
+            segments: const [
+              ButtonSegment(value: 'auto', label: Text('Авто')),
+              ButtonSegment(value: 'bicycle', label: Text('Вело')),
+              ButtonSegment(value: 'electric_bike', label: Text('Электровел')),
+              ButtonSegment(value: 'pedestrian', label: Text('Пешком')),
+            ],
+            selected: {_transport},
+            showSelectedIcon: false,
+            style: SegmentedButton.styleFrom(
+              backgroundColor: FMagnitTheme.inactive,
+              foregroundColor: FMagnitTheme.textPrimary,
+              selectedBackgroundColor: FMagnitTheme.accent,
+              selectedForegroundColor: Colors.white,
+              textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+            ),
+            onSelectionChanged: (s) {
+              final v = s.first;
+              setState(() => _transport = v);
+              _overlay.setTransportMode(v);
+            },
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Тип транспорта для маршрутов Яндекса. Электровел — отдельный профиль SDK, не самокат.',
+            style: TextStyle(color: FMagnitTheme.textMuted, fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _item(
+    String label,
+    String desc,
+    bool ok, {
+    VoidCallback? onOpen,
+  }) {
+    return _card(
       child: Row(
         children: [
           Icon(
@@ -147,80 +321,6 @@ class _HealthPageState extends State<HealthPage> {
     );
   }
 
-  Widget _widthCard() {
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: FMagnitTheme.card,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            children: [
-              Icon(Icons.tune, color: FMagnitTheme.accent, size: 22),
-              SizedBox(width: 8),
-              Text(
-                'Оверлей',
-                style: TextStyle(
-                  color: FMagnitTheme.textPrimary,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 15,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              const Expanded(
-                child: Text(
-                  'Ширина свёрнутой шапки',
-                  style: TextStyle(
-                    color: FMagnitTheme.textPrimary,
-                    fontSize: 14,
-                  ),
-                ),
-              ),
-              Text(
-                '${_widthPct.round()}%',
-                style: const TextStyle(
-                  color: FMagnitTheme.accent,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14,
-                ),
-              ),
-            ],
-          ),
-          Semantics(
-            label: 'Ширина свёрнутой шапки оверлея в процентах',
-            slider: true,
-            child: Slider(
-              value: _widthPct,
-              min: 20,
-              max: 100,
-              divisions: 16,
-              label: '${_widthPct.round()}%',
-              activeColor: FMagnitTheme.accent,
-              inactiveColor: FMagnitTheme.inactive,
-              onChanged: (v) => setState(() => _widthPct = v),
-              onChangeEnd: (v) => _overlay.setHeaderWidthPct(v.round()),
-            ),
-          ),
-          const Text(
-            '20–100%, шаг 5%. Применяется к шапке сразу, даже при запущенном оверлее.',
-            style: TextStyle(
-              color: FMagnitTheme.textMuted,
-              fontSize: 12,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final h = _health;
@@ -231,7 +331,10 @@ class _HealthPageState extends State<HealthPage> {
         title: const Text('Настройки и здоровье'),
         actions: [
           IconButton(
-            onPressed: _refresh,
+            onPressed: () {
+              _refresh();
+              _loadSettings();
+            },
             icon: const Icon(Icons.refresh),
             tooltip: 'Обновить',
           ),
@@ -242,6 +345,8 @@ class _HealthPageState extends State<HealthPage> {
           : ListView(
               padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
               children: [
+                _providerCard(),
+                _transportCard(),
                 _widthCard(),
                 const SizedBox(height: 8),
                 _item(
@@ -275,12 +380,7 @@ class _HealthPageState extends State<HealthPage> {
                   h.overlayRunning,
                 ),
                 const SizedBox(height: 24),
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: FMagnitTheme.card,
-                    borderRadius: BorderRadius.circular(16),
-                  ),
+                _card(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
