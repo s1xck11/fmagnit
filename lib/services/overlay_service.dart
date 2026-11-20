@@ -94,6 +94,29 @@ class OverlayService {
     await _channel.invokeMethod('setHeaderWidthPct', {'pct': pct});
   }
 
+  Future<String> getTransportMode() async {
+    final r = await _channel.invokeMethod<String>('getTransportMode');
+    return r ?? 'auto';
+  }
+
+  Future<void> setTransportMode(String mode) async {
+    await _channel.invokeMethod('setTransportMode', {'mode': mode});
+  }
+
+  Future<String> getMapProvider() async {
+    final r = await _channel.invokeMethod<String>('getMapProvider');
+    return r ?? 'auto';
+  }
+
+  Future<void> setMapProvider(String provider) async {
+    await _channel.invokeMethod('setMapProvider', {'provider': provider});
+  }
+
+  Future<bool> isMapKitAvailable() async {
+    final r = await _channel.invokeMethod<bool>('isMapKitAvailable');
+    return r ?? false;
+  }
+
   void setStartHandler(Future<void> Function(String id) handler) {
     _channel.setMethodCallHandler((call) async {
       if (call.method == 'onOverlayStart') {
