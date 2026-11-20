@@ -17,8 +17,12 @@ object OverlayPrefs {
     private const val KEY_SERVICE_ON = "is_service_on"
     private const val KEY_DOOR_CODES_JSON = "door_codes_json"
     private const val KEY_HEADER_WIDTH_PCT = "header_width_pct"
+    private const val KEY_TRANSPORT_MODE = "transport_mode"
 
     private const val DEFAULT_HEADER_WIDTH_PCT = 65
+    private const val DEFAULT_TRANSPORT_MODE = "auto"
+
+    private val TRANSPORT_MODES = listOf("auto", "bicycle", "electric_bike", "pedestrian")
 
     private fun prefs(ctx: Context): SharedPreferences =
         ctx.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -71,5 +75,15 @@ object OverlayPrefs {
 
     fun loadHeaderWidthPct(ctx: Context): Int {
         return prefs(ctx).getInt(KEY_HEADER_WIDTH_PCT, DEFAULT_HEADER_WIDTH_PCT).coerceIn(20, 100)
+    }
+
+    fun saveTransportMode(ctx: Context, mode: String) {
+        val m = if (TRANSPORT_MODES.contains(mode)) mode else DEFAULT_TRANSPORT_MODE
+        prefs(ctx).edit().putString(KEY_TRANSPORT_MODE, m).apply()
+    }
+
+    fun loadTransportMode(ctx: Context): String {
+        val m = prefs(ctx).getString(KEY_TRANSPORT_MODE, DEFAULT_TRANSPORT_MODE) ?: DEFAULT_TRANSPORT_MODE
+        return if (TRANSPORT_MODES.contains(m)) m else DEFAULT_TRANSPORT_MODE
     }
 }
