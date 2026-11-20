@@ -44,6 +44,7 @@ import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView as OsmMapView
 import org.osmdroid.views.overlay.Marker
+import org.osmdroid.views.overlay.Polyline as OsmPolyline
 import org.osmdroid.views.overlay.gestures.RotationGestureOverlay
 import com.yandex.mapkit.mapview.MapView as YandexMapView
 import java.io.File
@@ -140,6 +141,10 @@ class OverlayService : Service() {
     private var resetNorthButton: TextView? = null
     private var orientationTicker: Runnable? = null
 
+    private var routeEta: String = ""
+    private var routeDistance: String = ""
+    private var routePoints: List<Pair<Double, Double>> = emptyList()
+
     private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -220,11 +225,17 @@ class OverlayService : Service() {
                     val lon = intent.getDoubleExtra(EXTRA_ORDER_LON, Double.NaN)
                     if (!lat.isNaN() && !lon.isNaN()) {
                         OrderTargetStore.save(this, lat, lon)
+                        routeEta = ""
+                        routeDistance = ""
+                        routePoints = emptyList()
                         handler.post { openFullMap(lat, lon) }
                     }
                 }
                 ACTION_ORDER_TARGET_CLEAR -> {
                     OrderTargetStore.clear(this)
+                    routeEta = ""
+                    routeDistance = ""
+                    routePoints = emptyList()
                     handler.post { rebuildContent() }
                 }
                 ACTION_SET_HEADER_WIDTH -> {
@@ -635,6 +646,23 @@ class OverlayService : Service() {
             c.addView(mutedLine("Код домофона: пока нет"))
         }
 
+        if (routeEta.isNotEmpty() || routeDistance.isNotEmpty()) {
+            c.addView(TextView(this).apply {
+                text = buildString {
+                    append("Маршрут: ")
+                    if (routeDistance.isNotEmpty()) append(routeDistance)
+                    if (routeEta.isNotEmpty()) {
+                        if (isNotEmpty()) append(" · ")
+                        append(routeEta)
+                    }
+                }
+                setTextColor(COLOR_SUCCESS)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                setTypeface(typeface, Typeface.BOLD)
+                setPadding(0, 0, 0, dp(4))
+            })
+        }
+
         val go = actionBtn("ПЕРЕЙТИ", COLOR_ACCENT) {
             try {
                 isRunning = MockManager.start(this@OverlayService, lat, lon, 5.0, 0.0)
@@ -645,6 +673,12 @@ class OverlayService : Service() {
         val map = actionBtn("КАРТА", COLOR_INACTIVE) { openFullMap(lat, lon) }
         c.addView(row2(go, map))
 
+        c.addView(actionBtn("МАРШРУТ", COLOR_INACTIVE) { requestRouteTo(lat, lon) }.apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).also { it.topMargin = dp(GAP_DP) }
+        })
+
         c.addView(TextView(this).apply {
             text = "Закрыть заказ"
             setTextColor(COLOR_MUTED)
@@ -654,10 +688,53 @@ class OverlayService : Service() {
             background = pressableBg(COLOR_SURFACE, 8)
             setOnClickListener(guarded {
                 OrderTargetStore.clear(this@OverlayService)
+                routeEta = ""
+                routeDistance = ""
+                routePoints = emptyList()
                 rebuildContent()
             })
         })
         return c
+    }
+
+    private fun requestRouteTo(lat: Double, lon: Double) {
+        val from = getCurrentLocation()
+        if (from == null) {
+            Toast.makeText(this, "Нет текущей позиции для маршрута.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val mode = OverlayPrefs.loadTransportMode(this)
+        Toast.makeText(this, "Строю маршрут ($mode)…", Toast.LENGTH_SHORT).show()
+        MapKitHub.requestRoute(this, from.latitude, from.longitude, lat, lon, mode) { result ->
+            handler.post {
+                if (result == null) {
+                    Toast.makeText(this, "Маршрут не построен (ключ/лимит/сеть).", Toast.LENGTH_LONG).show()
+                    return@post
+                }
+                routePoints = result.points
+                routeEta = result.eta
+                routeDistance = result.distance
+                drawRouteOnMap()
+                rebuildContent()
+            }
+        }
+    }
+
+    private fun drawRouteOnMap() {
+        if (routePoints.size < 2) return
+        yandexMap?.let { MapKitHub.drawRoute(it.map, routePoints) }
+        osmMap?.let { m ->
+            try {
+                val pl = OsmPolyline()
+                pl.setPoints(routePoints.map { GeoPoint(it.first, it.second) })
+                pl.outlinePaint.color = Color.argb(230, 227, 6, 19)
+                pl.outlinePaint.strokeWidth = 8f
+                m.overlays.add(pl)
+                m.invalidate()
+            } catch (e: Throwable) {
+                CrashLogger.log(this, "osm_polyline", e)
+            }
+        }
     }
 
     private fun buildPointsCard(): LinearLayout {
@@ -1036,6 +1113,7 @@ class OverlayService : Service() {
                 }
                 buildOsmMapWindow(lat, lon)
             }
+            if (routePoints.isNotEmpty()) drawRouteOnMap()
         } catch (e: Throwable) {
             CrashLogger.log(this, "openFullMap", e)
             closeFullMap()
