@@ -91,6 +91,13 @@ class MainActivity : FlutterActivity() {
                         }
                         result.success(null)
                     }
+                    "getTransportMode" -> result.success(OverlayPrefs.loadTransportMode(this))
+                    "setTransportMode" -> {
+                        val mode = call.argument<String>("mode") ?: "auto"
+                        OverlayPrefs.saveTransportMode(this, mode)
+                        result.success(null)
+                    }
+                    "isMapKitAvailable" -> result.success(MapKitHub.hasKey())
                     else -> result.notImplemented()
                 }
             }
