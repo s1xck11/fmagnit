@@ -6,6 +6,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,6 +37,10 @@ jobs:
           if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
             curl -L -o gradle/wrapper/gradle-wrapper.jar https://raw.githubusercontent.com/gradle/gradle/v7.5.0/gradle/wrapper/gradle-wrapper.jar
           fi
+
+      - name: MapKit key from secret
+        run: |
+          echo "MAPKIT_API_KEY=${{ secrets.MAPKIT_API_KEY }}" > android/mapkit.properties
 
       - name: Decode keystore
         run: |
