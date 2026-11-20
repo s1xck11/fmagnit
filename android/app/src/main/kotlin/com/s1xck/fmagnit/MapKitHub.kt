@@ -35,17 +35,19 @@ import java.lang.reflect.Proxy
  *  - lifecycle onStart/onStop у фабрики и у MapView;
  *  - night mode, камера, placemarks, пробки, маршруты 4 типов.
  *
- * Имена API сверены с исходниками официального плагина yandex_mapkit:
+ * Имена API сверены с исходниками официального плагина yandex_mapkit
+ * и с фактическим компилятором против 4.13:
  *  - пробки: MapKitFactory.createTrafficLayer + setTrafficVisible;
- *  - авто: DirectionsFactory.createDrivingRouter(COMBINED), листенер вложенный;
- *  - вело/пешком: TransportFactory.createBicycleRouterV2 / createPedestrianRouter,
- *    листенер Session.RouteListener (masstransit);
+ *  - авто: DirectionsFactory.createDrivingRouter(COMBINED), вложенный листенер;
+ *  - вело/пешком: TransportFactory.createBicycleRouterV2 / createPedestrianRouter;
+ *  - RequestPoint в 4.13: пустой конструктор + свойства point/requestPointType;
  *  - электровел: рефлексия по createElectricBikeRouter[V2], иначе честный вело-fallback.
  */
 object MapKitHub {
 
     @Volatile private var initialized = false
     @Volatile private var started = false
+    @Volatile private var appCtx: Context? = null
     private val lock = Any()
 
     data class RouteResult(
@@ -59,6 +61,7 @@ object MapKitHub {
     } catch (_: Throwable) { false }
 
     fun ensureInit(ctx: Context): Boolean {
+        appCtx = ctx.applicationContext
         if (initialized) return true
         if (!hasKey()) return false
         synchronized(lock) {
@@ -152,7 +155,15 @@ object MapKitHub {
             obj.setStrokeColor(Color.argb(230, 227, 6, 19))
             obj.setStrokeWidth(4f)
         } catch (e: Throwable) {
-            CrashLogger.logMessage(null, "mapkit_polyline", e.toString())
+            val c = appCtx
+            if (c != null) CrashLogger.logMessage(c, "mapkit_polyline", e.toString())
+        }
+    }
+
+    private fun requestPoint(lat: Double, lon: Double): RequestPoint {
+        return RequestPoint().apply {
+            point = Point(lat, lon)
+            requestPointType = RequestPointType.WAYPOINT
         }
     }
 
@@ -174,8 +185,8 @@ object MapKitHub {
             return
         }
         val points = listOf(
-            RequestPoint(Point(fromLat, fromLon), RequestPointType.WAYPOINT),
-            RequestPoint(Point(toLat, toLon), RequestPointType.WAYPOINT)
+            requestPoint(fromLat, fromLon),
+            requestPoint(toLat, toLon)
         )
         try {
             when (mode) {
