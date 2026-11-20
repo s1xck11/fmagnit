@@ -97,6 +97,12 @@ class MainActivity : FlutterActivity() {
                         OverlayPrefs.saveTransportMode(this, mode)
                         result.success(null)
                     }
+                    "getMapProvider" -> result.success(OverlayPrefs.loadMapProvider(this))
+                    "setMapProvider" -> {
+                        val provider = call.argument<String>("provider") ?: "auto"
+                        OverlayPrefs.saveMapProvider(this, provider)
+                        result.success(null)
+                    }
                     "isMapKitAvailable" -> result.success(MapKitHub.hasKey())
                     else -> result.notImplemented()
                 }
