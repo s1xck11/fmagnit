@@ -19,6 +19,10 @@ import com.yandex.mapkit.map.CameraPosition
 import com.yandex.mapkit.map.Map
 import com.yandex.mapkit.map.PlacemarkMapObject
 import com.yandex.mapkit.mapview.MapView
+import com.yandex.mapkit.search.SearchFactory
+import com.yandex.mapkit.search.SearchOptions
+import com.yandex.mapkit.search.SearchResponse
+import com.yandex.mapkit.search.SearchType
 import com.yandex.mapkit.traffic.TrafficLayer
 import com.yandex.mapkit.transport.TransportFactory
 import com.yandex.mapkit.transport.masstransit.FitnessOptions
@@ -35,15 +39,11 @@ import java.lang.reflect.Proxy
  *  - setApiKey ДО initialize, ровно один раз на процесс;
  *  - ключ из BuildConfig (секрет GitHub), пусто -> fallback на OSM;
  *  - lifecycle onStart/onStop у фабрики и у MapView;
- *  - night mode, камера, placemarks, пробки (по умолчанию скрыты), маршруты 4 типов.
+ *  - night mode, камера, placemarks, пробки (тумблер в настройках), маршруты 4 типов;
+ *  - геокодер Яндекса (SearchType.GEO) с рефлексией к сигнатурам 4.13.
  *
  * Имена API сверены с исходниками официального плагина yandex_mapkit
- * и с фактическим компилятором против 4.13:
- *  - пробки: MapKitFactory.createTrafficLayer + setTrafficVisible;
- *  - авто: DirectionsFactory.createDrivingRouter(COMBINED), вложенный листенер;
- *  - вело/пешком: TransportFactory.createBicycleRouterV2 / createPedestrianRouter;
- *  - RequestPoint: конструкция через рефлексию (ctor 2 -> 5 -> 0 + поля по типам);
- *  - электровел: рефлексия по createElectricBikeRouter[V2], иначе честный вело-fallback.
+ * и с фактическим компилятором против 4.13.
  */
 object MapKitHub {
 
@@ -57,6 +57,13 @@ object MapKitHub {
         val points: List<Pair<Double, Double>>,
         val eta: String,
         val distance: String
+    )
+
+    data class GeocodeResult(
+        val name: String,
+        val address: String,
+        val lat: Double,
+        val lon: Double
     )
 
     fun hasKey(): Boolean = try {
@@ -172,6 +179,106 @@ object MapKitHub {
             if (c != null) CrashLogger.logMessage(c, "mapkit_polyline", e.toString())
         }
     }
+
+    // ===================== ГЕОКОДЕР =====================
+
+    /**
+     * Геокод Яндекса. Колбэк на main-потоке (листенер MapKit).
+     * Пустой список = недоступно/ничего не найдено -> вызывающий делает fallback.
+     */
+    fun geocode(ctx: Context, query: String, onResult: (List<GeocodeResult>) -> Unit) {
+        if (query.isBlank()) {
+            onResult(emptyList())
+            return
+        }
+        if (!ensureInit(ctx)) {
+            onResult(emptyList())
+            return
+        }
+        try {
+            val manager = SearchFactory.getInstance().createSearchManager(SearchType.GEO)
+            val submit = manager.javaClass.methods.firstOrNull { m ->
+                m.name == "submit" &&
+                    m.parameterTypes.isNotEmpty() &&
+                    m.parameterTypes[0] == String::class.java
+            }
+            if (submit == null) {
+                onResult(emptyList())
+                return
+            }
+            val params = submit.parameterTypes
+            val listenerType = params.last()
+            val listener = Proxy.newProxyInstance(
+                ctx.classLoader,
+                arrayOf(listenerType)
+            ) { _, method, args ->
+                when (method.name) {
+                    "onSearchResponse" -> {
+                        val resp = args?.getOrNull(0) as? SearchResponse
+                        onResult(parseSearch(resp))
+                        null
+                    }
+                    "onSearchError" -> {
+                        CrashLogger.logMessage(ctx, "geocode_error", args?.getOrNull(0)?.toString() ?: "")
+                        onResult(emptyList())
+                        null
+                    }
+                    else -> null
+                }
+            }
+
+            val options = newSearchOptions()
+            val callArgs = arrayOfNulls<Any>(params.size)
+            callArgs[0] = query
+            for (i in 1 until params.size - 1) {
+                callArgs[i] = if (params[i] == SearchOptions::class.java) options else defaultFor(params[i])
+            }
+            callArgs[params.size - 1] = listener
+            submit.invoke(manager, *callArgs)
+        } catch (e: Throwable) {
+            CrashLogger.log(ctx, "geocode", e)
+            onResult(emptyList())
+        }
+    }
+
+    private fun newSearchOptions(): SearchOptions? {
+        return try {
+            val c = SearchOptions::class.java.constructors.minByOrNull { it.parameterTypes.size }
+                ?: return null
+            val args = c.parameterTypes.map { defaultFor(it) }.toTypedArray()
+            c.newInstance(*args) as SearchOptions
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun defaultFor(t: Class<*>): Any? = when (t) {
+        Int::class.javaPrimitiveType -> 0
+        Long::class.javaPrimitiveType -> 0L
+        Boolean::class.javaPrimitiveType -> false
+        Double::class.javaPrimitiveType -> 0.0
+        Float::class.javaPrimitiveType -> 0f
+        else -> null
+    }
+
+    private fun parseSearch(resp: SearchResponse?): List<GeocodeResult> {
+        if (resp == null) return emptyList()
+        return try {
+            resp.collection.items.take(8).mapNotNull { geo ->
+                val pt = geo.geometry.firstOrNull()?.point ?: return@mapNotNull null
+                GeocodeResult(
+                    name = geo.name ?: "",
+                    address = geo.descriptionText ?: "",
+                    lat = pt.latitude,
+                    lon = pt.longitude
+                )
+            }
+        } catch (_: Throwable) {
+            emptyList()
+        }
+    }
+
+    // ===================== МАРШРУТЫ =====================
 
     /**
      * RequestPoint в разных версиях SDK имеет разные конструкторы
