@@ -2,13 +2,29 @@ import 'package:flutter/material.dart';
 
 import '../models/waypoint.dart';
 import '../services/nominatim_service.dart';
+import '../services/overlay_service.dart';
 
 /// Открывает диалог поиска адреса и возвращает выбранный Waypoint или null.
+/// Источник: Яндекс (MapKit GEO), при недоступности — Nominatim (OSM).
 Future<Waypoint?> showAddressSearchDialog(BuildContext context) async {
   return showDialog<Waypoint>(
     context: context,
     builder: (_) => const _AddressSearchDialog(),
   );
+}
+
+class _AddrResult {
+  final String title;
+  final String subtitle;
+  final double latitude;
+  final double longitude;
+
+  _AddrResult({
+    required this.title,
+    required this.subtitle,
+    required this.latitude,
+    required this.longitude,
+  });
 }
 
 class _AddressSearchDialog extends StatefulWidget {
@@ -20,11 +36,13 @@ class _AddressSearchDialog extends StatefulWidget {
 
 class _AddressSearchDialogState extends State<_AddressSearchDialog> {
   final _service = NominatimService();
+  final _overlay = OverlayService();
   final _ctrl = TextEditingController();
 
   bool _loading = false;
   String? _error;
-  List<NominatimResult> _results = [];
+  String _source = '';
+  List<_AddrResult> _results = [];
 
   @override
   void dispose() {
@@ -40,30 +58,63 @@ class _AddressSearchDialogState extends State<_AddressSearchDialog> {
       _loading = true;
       _error = null;
       _results = [];
+      _source = '';
     });
 
+    List<_AddrResult> out = [];
+    String source = '';
+
+    // 1) Яндекс
     try {
-      final res = await _service.search(q);
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _results = res;
-        if (res.isEmpty) _error = 'Ничего не найдено';
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _error = 'Ошибка: $e';
-      });
+      final native = await _overlay.geocodeAddress(q);
+      if (native != null && native.isNotEmpty) {
+        out = native
+            .map((m) => _AddrResult(
+                  title: (m['name'] as String?) ?? '',
+                  subtitle: (m['address'] as String?) ?? '',
+                  latitude: (m['latitude'] as num).toDouble(),
+                  longitude: (m['longitude'] as num).toDouble(),
+                ))
+            .toList();
+        source = 'Яндекс';
+      }
+    } catch (_) {}
+
+    // 2) Fallback: Nominatim
+    if (out.isEmpty) {
+      try {
+        final res = await _service.search(q);
+        out = res
+            .map((r) => _AddrResult(
+                  title: r.displayName,
+                  subtitle: '',
+                  latitude: r.latitude,
+                  longitude: r.longitude,
+                ))
+            .toList();
+        source = 'OSM';
+      } catch (e) {
+        if (!mounted) return;
+        setState(() {
+          _loading = false;
+          _error = 'Ошибка: $e';
+        });
+        return;
+      }
     }
+
+    if (!mounted) return;
+    setState(() {
+      _loading = false;
+      _results = out;
+      _source = source;
+      if (out.isEmpty) _error = 'Ничего не найдено';
+    });
   }
 
-  void _pick(NominatimResult r) {
-    // Имя по умолчанию — первые 60 символов display_name
-    final name = r.displayName.length > 60
-        ? '${r.displayName.substring(0, 60)}…'
-        : r.displayName;
+  void _pick(_AddrResult r) {
+    final base = r.title.isNotEmpty ? r.title : r.subtitle;
+    final name = base.length > 60 ? '${base.substring(0, 60)}…' : base;
     Navigator.of(context).pop(
       Waypoint(
         name: name.isEmpty ? 'Точка' : name,
@@ -110,7 +161,18 @@ class _AddressSearchDialogState extends State<_AddressSearchDialog> {
                   style: TextStyle(color: Colors.red.shade700),
                 ),
               )
-            else if (_results.isNotEmpty)
+            else if (_results.isNotEmpty) ...[
+              if (_source.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Text(
+                    'Источник: $_source',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: Colors.grey,
+                    ),
+                  ),
+                ),
               Flexible(
                 child: ListView.separated(
                   shrinkWrap: true,
@@ -121,21 +183,25 @@ class _AddressSearchDialogState extends State<_AddressSearchDialog> {
                     return ListTile(
                       dense: true,
                       title: Text(
-                        r.displayName,
+                        r.title.isNotEmpty ? r.title : r.subtitle,
                         style: const TextStyle(fontSize: 13),
                         maxLines: 3,
                         overflow: TextOverflow.ellipsis,
                       ),
                       subtitle: Text(
                         '${r.latitude.toStringAsFixed(5)}, '
-                        '${r.longitude.toStringAsFixed(5)}',
+                        '${r.longitude.toStringAsFixed(5)}'
+                        '${r.subtitle.isNotEmpty && r.title.isNotEmpty ? '\n${r.subtitle}' : ''}',
                         style: const TextStyle(fontSize: 11),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                       ),
                       onTap: () => _pick(r),
                     );
                   },
                 ),
               ),
+            ],
           ],
         ),
       ),
