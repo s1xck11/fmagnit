@@ -104,6 +104,27 @@ class MainActivity : FlutterActivity() {
                         result.success(null)
                     }
                     "isMapKitAvailable" -> result.success(MapKitHub.hasKey())
+                    "getTrafficEnabled" -> result.success(OverlayPrefs.loadTrafficEnabled(this))
+                    "setTrafficEnabled" -> {
+                        val enabled = call.argument<Boolean>("enabled") ?: false
+                        OverlayPrefs.saveTrafficEnabled(this, enabled)
+                        // MapKit живёт в том же процессе: применяем сразу к открытой карте.
+                        MapKitHub.setTrafficVisible(enabled)
+                        result.success(null)
+                    }
+                    "geocodeAddress" -> {
+                        val query = call.argument<String>("query") ?: ""
+                        MapKitHub.geocode(this, query) { list ->
+                            result.success(list.map {
+                                mapOf(
+                                    "name" to it.name,
+                                    "address" to it.address,
+                                    "latitude" to it.lat,
+                                    "longitude" to it.lon
+                                )
+                            })
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }
