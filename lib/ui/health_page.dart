@@ -24,6 +24,7 @@ class _HealthPageState extends State<HealthPage> {
   String _provider = 'auto';
   String _transport = 'auto';
   bool _mapkitKey = false;
+  bool _traffic = false;
 
   static const String _emuiInstructions = '''
 Как сделать, чтобы fmagnit не вырубался на Huawei (EMUI 12):
@@ -82,12 +83,14 @@ class _HealthPageState extends State<HealthPage> {
     final p = await _overlay.getMapProvider();
     final t = await _overlay.getTransportMode();
     final k = await _overlay.isMapKitAvailable();
+    final tr = await _overlay.getTrafficEnabled();
     if (!mounted) return;
     setState(() {
       _widthPct = w.toDouble().clamp(20.0, 100.0).toDouble();
       _provider = p;
       _transport = t;
       _mapkitKey = k;
+      _traffic = tr;
     });
   }
 
@@ -231,6 +234,45 @@ class _HealthPageState extends State<HealthPage> {
     );
   }
 
+  Widget _trafficCard() {
+    return _card(
+      child: Row(
+        children: [
+          const Icon(Icons.traffic_outlined, color: FMagnitTheme.accent, size: 22),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Пробки на карте',
+                  style: TextStyle(
+                    color: FMagnitTheme.textPrimary,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Слой пробок Яндекса. Применяется сразу к открытой карте и к следующим.',
+                  style: TextStyle(color: FMagnitTheme.textMuted, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          Switch(
+            value: _traffic,
+            activeColor: FMagnitTheme.accent,
+            onChanged: (v) {
+              setState(() => _traffic = v);
+              _overlay.setTrafficEnabled(v);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _transportCard() {
     return _card(
       child: Column(
@@ -346,6 +388,7 @@ class _HealthPageState extends State<HealthPage> {
               padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
               children: [
                 _providerCard(),
+                _trafficCard(),
                 _transportCard(),
                 _widthCard(),
                 const SizedBox(height: 8),
