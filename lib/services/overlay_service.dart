@@ -117,6 +117,32 @@ class OverlayService {
     return r ?? false;
   }
 
+  Future<bool> getTrafficEnabled() async {
+    final r = await _channel.invokeMethod<bool>('getTrafficEnabled');
+    return r ?? false;
+  }
+
+  Future<void> setTrafficEnabled(bool enabled) async {
+    await _channel.invokeMethod('setTrafficEnabled', {'enabled': enabled});
+  }
+
+  /// Геокод Яндекса. null/пусто = недоступно -> вызывающий делает fallback на OSM.
+  Future<List<Map<String, dynamic>>?> geocodeAddress(String query) async {
+    try {
+      final r = await _channel.invokeMethod<List<dynamic>>(
+        'geocodeAddress',
+        {'query': query},
+      );
+      if (r == null) return null;
+      return r
+          .cast<Map<dynamic, dynamic>>()
+          .map((m) => Map<String, dynamic>.from(m))
+          .toList();
+    } catch (_) {
+      return null;
+    }
+  }
+
   void setStartHandler(Future<void> Function(String id) handler) {
     _channel.setMethodCallHandler((call) async {
       if (call.method == 'onOverlayStart') {
